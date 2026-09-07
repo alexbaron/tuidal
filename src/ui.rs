@@ -1,5 +1,6 @@
-//use crate::app::{App, InputMode, Tab};
-use crate::app::{App, InputMode, SearchFocus, SearchSection, Tab};
+use crate::app::search::SearchFocus;
+use crate::app::search::SearchSection;
+use crate::app::{App, InputMode, Tab};
 use crate::library::{LibraryFocus, LibrarySection, LibraryViewing};
 use crate::player::PlayerState;
 use ratatui::{

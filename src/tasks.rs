@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::app::{AppEvent, SearchSection};
+use crate::app::{AppEvent, search::SearchSection};
 use crate::tidal::{TidalDaemonClient, Track};
 
 /// section = None → initial search (replaces results, emits SearchDone).

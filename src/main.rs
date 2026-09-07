@@ -10,7 +10,8 @@ mod tidal;
 mod ui;
 
 use anyhow::Result;
-use app::{ApiStatus, App, AppEvent, InputMode, SearchFocus, SearchSection, Tab};
+use app::search::{SearchFocus, SearchSection};
+use app::{ApiStatus, App, AppEvent, InputMode, Tab};
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
