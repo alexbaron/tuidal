@@ -1,3 +1,7 @@
 /target
 CONTEXTO.md
 /__pycache__
+
+/.codegraph
+AGENTS.md
+opencode.jsonc
