@@ -5,7 +5,9 @@ Fork of the original Tuidal for personal purpose.
 - [x] new tab spectre
 <img width="1031" height="513" alt="image" src="https://github.com/user-attachments/assets/0a64bbff-e7cf-4f93-8ab9-7d1601e9f386" />
 - [x] preset / balance / ... based on mpv
-
+<img width="873" height="643" alt="image" src="https://github.com/user-attachments/assets/864baf19-547a-49ff-95d4-7f88e9009076" />
+- [x] Add background image behind the spectrum (kitty)
+<img width="1271" height="829" alt="image" src="https://github.com/user-attachments/assets/079f0484-96b4-412b-aa71-14290e3f428b" />
 # Tuidal
 
 A terminal music player for Tidal, built with Rust and ratatui. Streams lossless audio directly in your terminal with album art support via the Kitty graphics protocol.
