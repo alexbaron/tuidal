@@ -1,4 +1,8 @@
 
+Fork of the original Tuidal for personal purpose.
+- french interface
+- add some cool features (to define)
+
 # Tuidal
 
 A terminal music player for Tidal, built with Rust and ratatui. Streams lossless audio directly in your terminal with album art support via the Kitty graphics protocol.
