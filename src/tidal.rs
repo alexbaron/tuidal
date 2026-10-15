@@ -1,16 +1,16 @@
-/// tidal.rs — Llama a tidal.py como subproceso y parsea el JSON que devuelve.
+/// tidal.rs — Appelle tidal.py comme sous-processus et parse le JSON renvoyé.
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::BufRead;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 
-// ─── Calidades ────────────────────────────────────────────────────────────────
+// ─── Qualités ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,7 +37,7 @@ impl Quality {
     }
 }
 
-// ─── Modelos ──────────────────────────────────────────────────────────────────
+// ─── Modèles ──────────────────────────────────────────────────────────────────
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -90,7 +90,7 @@ impl Track {
     }
 }
 
-// Modelo para álbumes de la colección
+// Modèle pour les albums de la collection
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -150,7 +150,7 @@ pub struct Mix {
     pub sub_title: Option<String>,
 }
 
-// ─── Respuestas internas ──────────────────────────────────────────────────────
+// ─── Réponses internes ──────────────────────────────────────────────────────
 
 #[allow(dead_code)]
 #[derive(Deserialize)]
@@ -257,7 +257,7 @@ fn parse_lrc(lrc: &str) -> Vec<(u64, String)> {
     result
 }
 
-// ─── Cliente ──────────────────────────────────────────────────────────────────
+// ─── Client ──────────────────────────────────────────────────────────────────
 
 #[allow(dead_code)]
 pub struct TidalClient {
@@ -279,10 +279,39 @@ impl TidalClient {
             .unwrap_or_else(|| "tidal.py".to_string())
     }
 
+    /// Resolve the Python interpreter for tidal.py, in priority order:
+    /// TUIDAL_PYTHON_PATH, $VIRTUAL_ENV/bin/python, .venv next to the script,
+    /// .venv in the cwd, then plain "python3".
+    pub fn default_python_path(script_path: &str) -> String {
+        if let Ok(p) = std::env::var("TUIDAL_PYTHON_PATH") {
+            if !p.is_empty() {
+                return p;
+            }
+        }
+        if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
+            let p = std::path::Path::new(&venv).join("bin/python");
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        if let Some(dir) = std::path::Path::new(script_path).parent() {
+            let p = dir.join(".venv/bin/python");
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            let p = cwd.join(".venv/bin/python");
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        "python3".to_string()
+    }
+
     pub fn new() -> Self {
         let script_path = Self::default_script_path();
-        let python_path =
-            std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
+        let python_path = Self::default_python_path(&script_path);
 
         Self {
             quality: Quality::Lossless,
@@ -310,14 +339,14 @@ impl TidalClient {
             .output()
             .map_err(|e| {
                 anyhow!(
-                    "No se pudo ejecutar python3: {e}\n¿Está tidal.py en '{}'?",
+                    "Impossible d'exécuter python3 : {e}\nEst-ce que tidal.py est dans '{}' ?",
                     self.script_path
                 )
             })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if stdout.is_empty() {
-            return Err(anyhow!("tidal.py no produjo output"));
+            return Err(anyhow!("tidal.py n'a produit aucun output"));
         }
         Ok(stdout)
     }
@@ -352,7 +381,7 @@ impl TidalClient {
         if resp.authenticated.unwrap_or(false) {
             Ok(())
         } else {
-            Err(anyhow!("Sin sesión activa"))
+            Err(anyhow!("Pas de session active"))
         }
     }
 
@@ -367,16 +396,16 @@ impl TidalClient {
                 .stderr(Stdio::null())
                 .stdout(Stdio::piped())
                 .spawn()
-                .map_err(|e| anyhow!("Error lanzando python3: {e}"))?;
-            // Leer solo la primera línea (JSON con URL), luego dejar el proceso
-            // corriendo en background — el thread de Python sigue esperando la
-            // autorización y escribe el resultado en POLL_FILE.
+                .map_err(|e| anyhow!("Erreur lors du lancement de python3 : {e}"))?;
+            // Lire seulement la première ligne (JSON avec URL), puis laisser le
+            // processus tourner en background — le thread Python continue
+            // d'attendre l'autorisation et écrit le résultat dans POLL_FILE.
             let reader = std::io::BufReader::new(child.stdout.take().unwrap());
             let first_line = reader
                 .lines()
                 .next()
-                .ok_or_else(|| anyhow!("tidal.py no produjo output"))?
-                .map_err(|e| anyhow!("Error leyendo output: {e}"))?;
+                .ok_or_else(|| anyhow!("tidal.py n'a produit aucun output"))?
+                .map_err(|e| anyhow!("Erreur de lecture de l'output : {e}"))?;
             Ok::<String, anyhow::Error>(first_line)
         })
         .await??;
@@ -386,7 +415,7 @@ impl TidalClient {
         if let Some(e) = resp.error {
             return Err(anyhow!("{e}"));
         }
-        let url = resp.url.ok_or_else(|| anyhow!("Sin URL de auth"))?;
+        let url = resp.url.ok_or_else(|| anyhow!("Pas d'URL d'auth"))?;
         let code = resp.code.unwrap_or_default();
         Ok(("pending".to_string(), code, url))
     }
@@ -418,7 +447,7 @@ impl TidalClient {
             return Err(anyhow!("{e}"));
         }
         Ok(StreamInfo {
-            url: resp.url.ok_or_else(|| anyhow!("Sin URL de stream"))?,
+            url: resp.url.ok_or_else(|| anyhow!("Pas d'URL de stream"))?,
             codec: resp.codec.unwrap_or_else(|| "flac".into()),
             bit_depth: resp.bit_depth.unwrap_or(16),
             sample_rate: resp.sample_rate.unwrap_or(44100),
@@ -441,7 +470,7 @@ impl TidalClient {
         let id_str = track_id.to_string();
         let stdout = self.run(&["lyrics", &id_str])?;
         if stdout.contains("\"error\"") {
-            return Err(anyhow!("Letras no disponibles"));
+            return Err(anyhow!("Paroles non disponibles"));
         }
         let resp: LyricsResponse = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
@@ -477,17 +506,19 @@ impl TidalClient {
     }
 }
 
-// ─── Cliente persistente (daemon) ─────────────────────────────────────────────
+// ─── Client persistant (daemon) ─────────────────────────────────────────────
 
 type RpcResult = Result<serde_json::Value>;
 
 struct DaemonInner {
     pending: tokio::sync::Mutex<HashMap<u64, oneshot::Sender<RpcResult>>>,
     next_id: AtomicU64,
+    /// Last lines read on the daemon's stderr (ring buffer, for error reporting)
+    stderr_tail: std::sync::Mutex<VecDeque<String>>,
 }
 
-/// Cliente que mantiene un proceso Python persistente (--daemon).
-/// Se comunica via JSON-RPC sobre stdin/stdout.
+/// Client qui maintient un processus Python persistant (--daemon).
+/// Communique via JSON-RPC sur stdin/stdout.
 pub struct TidalDaemonClient {
     stdin: tokio::sync::Mutex<tokio::io::BufWriter<tokio::process::ChildStdin>>,
     inner: Arc<DaemonInner>,
@@ -502,15 +533,17 @@ impl TidalDaemonClient {
             .arg("--daemon")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()?;
 
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("No stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
+        let mut stderr = child.stderr.take().ok_or_else(|| anyhow!("No stderr"))?;
 
         let inner = Arc::new(DaemonInner {
             pending: tokio::sync::Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            stderr_tail: std::sync::Mutex::new(VecDeque::new()),
         });
 
         let mut writer = tokio::io::BufWriter::new(stdin);
@@ -525,7 +558,58 @@ impl TidalDaemonClient {
         // Read quality response
         let mut reader = tokio::io::BufReader::new(stdout);
         let mut resp_line = String::new();
-        reader.read_line(&mut resp_line).await?;
+        let n = reader.read_line(&mut resp_line).await?;
+
+        // If the daemon died at startup (e.g. missing tidalapi), stdout closes
+        // or emits no JSON: surface its stderr tail instead of a later broken pipe.
+        if n == 0 || serde_json::from_str::<serde_json::Value>(&resp_line).is_err() {
+            let mut stderr_buf = String::new();
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                stderr.read_to_string(&mut stderr_buf),
+            )
+            .await;
+            let _ = child.kill().await;
+            let tail: Vec<&str> = stderr_buf
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .rev()
+                .take(3)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            return if tail.is_empty() {
+                Err(anyhow!("Python daemon exited at startup ({python_path})"))
+            } else {
+                Err(anyhow!(
+                    "Python daemon exited at startup ({python_path}): {}",
+                    tail.join("\n")
+                ))
+            };
+        }
+
+        // Drain stderr in the background so a full pipe can never block Python;
+        // keep the last lines for error reporting in call().
+        let inner_stderr = inner.clone();
+        tokio::spawn(async move {
+            let mut err_reader = tokio::io::BufReader::new(stderr);
+            let mut l = String::new();
+            loop {
+                l.clear();
+                match err_reader.read_line(&mut l).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if let Ok(mut tail) = inner_stderr.stderr_tail.lock() {
+                            if tail.len() >= 20 {
+                                tail.pop_front();
+                            }
+                            tail.push_back(l.trim_end().to_string());
+                        }
+                    }
+                }
+            }
+        });
 
         let inner_clone = inner.clone();
         let reader_handle = tokio::spawn(async move {
@@ -541,18 +625,24 @@ impl TidalDaemonClient {
                                 let mut pending = inner_clone.pending.lock().await;
                                 if let Some(tx) = pending.remove(&id) {
                                     if let Some(error) = val.get("error") {
-                                        let msg = error.as_str().unwrap_or("error desconocido");
+                                        let msg = error.as_str().unwrap_or("erreur inconnue");
                                         let _ = tx.send(Err(anyhow!("{}", msg)));
                                     } else if let Some(result) = val.get("result") {
                                         let _ = tx.send(Ok(result.clone()));
                                     } else {
-                                        let _ = tx.send(Err(anyhow!("Respuesta inválida")));
+                                        let _ = tx.send(Err(anyhow!("Réponse invalide")));
                                     }
                                 }
                             }
                         }
                     }
                 }
+            }
+            // Daemon exited: fail all in-flight calls instead of letting them
+            // wait for the 30s timeout.
+            let mut pending = inner_clone.pending.lock().await;
+            for (_, tx) in pending.drain() {
+                let _ = tx.send(Err(anyhow!("Python daemon exited")));
             }
         });
 
@@ -579,10 +669,22 @@ impl TidalDaemonClient {
         let mut line = serde_json::to_string(&req)?;
         line.push('\n');
 
-        {
+        let write_err = {
             let mut stdin = self.stdin.lock().await;
-            stdin.write_all(line.as_bytes()).await?;
-            stdin.flush().await?;
+            match stdin.write_all(line.as_bytes()).await {
+                Ok(()) => stdin.flush().await.err(),
+                Err(e) => Some(e),
+            }
+        };
+        if let Some(e) = write_err {
+            {
+                let mut pending = self.inner.pending.lock().await;
+                pending.remove(&id);
+            }
+            return Err(anyhow!(
+                "Python daemon is not running: {e}{}",
+                self.stderr_tail()
+            ));
         }
 
         match tokio::time::timeout(Duration::from_secs(30), rx).await {
@@ -591,8 +693,18 @@ impl TidalDaemonClient {
             Err(_) => {
                 let mut pending = self.inner.pending.lock().await;
                 pending.remove(&id);
-                Err(anyhow!("Timeout tras 30s"))
+                Err(anyhow!("Timeout après 30s"))
             }
+        }
+    }
+
+    /// Last stderr lines collected from the daemon, prefixed with " — ", or "".
+    fn stderr_tail(&self) -> String {
+        match self.inner.stderr_tail.lock() {
+            Ok(tail) if !tail.is_empty() => {
+                format!(" — {}", tail.iter().cloned().collect::<Vec<_>>().join(" | "))
+            }
+            _ => String::new(),
         }
     }
 
@@ -605,7 +717,7 @@ impl TidalDaemonClient {
         }
     }
 
-    // ── Wrappers tipo-safe ──────────────────────────────────────────────────
+    // ── Wrappers type-safe ──────────────────────────────────────────────────
 
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<Track>> {
         let v = self

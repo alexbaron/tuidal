@@ -53,6 +53,17 @@ cp tidal.py target/release/
 
 Or run directly from the project root with `cargo run`.
 
+### API credentials
+
+You can use your own Tidal API credentials by creating a `.env` file (at the project root or next to `tidal.py`) containing:
+
+```
+id=YOUR_TIDAL_CLIENT_ID
+secret=YOUR_TIDAL_CLIENT_SECRET
+```
+
+Alternatively, set the `TIDAL_CLIENT_ID` and `TIDAL_CLIENT_SECRET` environment variables (they take precedence over the `.env` file). If neither is provided — or if Tidal rejects your credentials (e.g. they are not enabled for the device flow) — tuidal automatically falls back to tidalapi's built-in credentials. The `.env` file is git-ignored.
+
 ---
 
 ## NixOS
@@ -177,7 +188,7 @@ cargo run
 | `2` | Quality: FLAC 16bit/44.1kHz |
 | `3` | Quality: AAC 320kbps |
 | `L` | Login to Tidal |
-| `Alt+L` | Cycle language (ES → EN → DE → RO) |
+| `Alt+L` | Cycle language (FR → EN → DE → RO) |
 | `q` | Quit |
 
 ---

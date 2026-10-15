@@ -43,13 +43,17 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Inicializar daemon persistente de Python
+    // Initialiser le daemon Python persistant
     let script_path = tidal::TidalClient::default_script_path();
-    let python_path = std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
+    let python_path = tidal::TidalClient::default_python_path(&script_path);
     let tidal = tidal::TidalDaemonClient::spawn(&script_path, &python_path, "LOSSLESS")
         .await
         .unwrap_or_else(|e| {
-            eprintln!("Error iniciando daemon Python: {e}");
+            // Restore the terminal before exiting: process::exit skips Drop,
+            // and raw mode was already enabled above.
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            eprintln!("Erreur au démarrage du daemon Python : {e}");
             std::process::exit(1);
         });
 
@@ -57,7 +61,7 @@ async fn main() -> Result<()> {
     app.picker = picker;
 
     app.load_settings();
-    // Sincronizar calidad local con el daemon
+    // Synchroniser la qualité locale avec le daemon
     let _ = tidal.set_quality(app.quality.as_api_str()).await;
 
     app.status_msg = app.lang.strings().status_session_loading.to_string();

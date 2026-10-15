@@ -3,7 +3,7 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-// Ruta del socket IPC de mpv — única por proceso
+// Chemin du socket IPC de mpv — unique par processus
 const SOCKET_PATH: &str = "/tmp/tuidal-mpv.sock";
 
 pub struct Player {
@@ -51,7 +51,7 @@ impl Player {
         self.elapsed = Duration::ZERO;
         self.last_tick = Some(Instant::now());
 
-        // Eliminar socket anterior si quedó huérfano
+        // Supprimer le socket précédent s'il est resté orphelin
         let _ = std::fs::remove_file(SOCKET_PATH);
 
         let mut mpv_args = vec![
@@ -77,7 +77,7 @@ impl Player {
                 self.state = PlayerState::Playing;
             }
             Err(_) => {
-                // fallback: ffplay (no tiene IPC pero al menos reproduce)
+                // fallback : ffplay (pas d'IPC mais au moins il joue)
                 let child2 = Command::new("ffplay")
                     .args(["-nodisp", "-autoexit", "-loglevel", "quiet", url])
                     .stdin(Stdio::null())
@@ -93,7 +93,7 @@ impl Player {
     }
 
     pub fn stop(&mut self) {
-        // Pedir a mpv que salga limpiamente antes de kill
+        // Demander à mpv de quitter proprement avant le kill
         self.ipc_cmd(r#"{"command":["quit"]}"#);
         // ponytail: removed blocking thread::sleep.
 
@@ -147,7 +147,7 @@ impl Player {
     }
 
     pub fn seek_forward(&mut self) {
-        // Seek real en mpv + actualizar contador visual
+        // Seek réel dans mpv + mise à jour du compteur visuel
         self.ipc_cmd(r#"{"command":["seek",10,"relative"]}"#);
         if let Some(info) = &self.current {
             let max = Duration::from_secs(info.duration);
@@ -184,13 +184,13 @@ impl Player {
         }
     }
 
-    /// Envía un comando JSON al socket IPC de mpv (fire-and-forget)
+    /// Envoie une commande JSON au socket IPC de mpv (fire-and-forget)
     fn ipc_cmd(&self, json: &str) {
         if let Ok(mut stream) = UnixStream::connect(SOCKET_PATH) {
             let msg = format!("{json}\n");
             let _ = stream.write_all(msg.as_bytes());
         }
-        // Si falla (socket no listo todavía) simplemente ignoramos
+        // Si ça échoue (socket pas encore prêt) on ignore simplement
     }
 
     pub fn tick(&mut self) {

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-tidal.py — Subproceso intermediario entre Rust y Tidal via tidalapi.
+tidal.py — Sous-processus intermédiaire entre Rust et Tidal via tidalapi.
 
-Modos:
-  python3 tidal.py --daemon                       (modo persistente JSON-RPC)
+Modes :
+  python3 tidal.py --daemon                       (mode persistant JSON-RPC)
   python3 tidal.py auth start|poll
   python3 tidal.py search "Daft Punk"
   python3 tidal.py stream 12345 [quality]
@@ -16,9 +16,15 @@ Modos:
   python3 tidal.py fav_albums
   python3 tidal.py lyrics <id>
   python3 tidal.py album_tracks <id>
+
+Identifiants API : lus dans `.env` (clés `id` et `secret`) à côté du script
+ou dans le cwd, ou via TIDAL_CLIENT_ID / TIDAL_CLIENT_SECRET.
+Si Tidal refuse ces identifiants (device flow non autorisé), retombe
+automatiquement sur ceux intégrés à tidalapi.
 """
 
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -26,6 +32,50 @@ from tidalapi.user import ItemOrder, AlbumOrder, OrderDirection
 import tidalapi
 
 SESSION_FILE = Path.home() / ".config" / "tidal-tui" / "tidalapi_session.json"
+
+
+def load_env_file() -> dict:
+    """Parse a .env file found next to this script or in the cwd (first hit wins).
+
+    Returns {} when no .env exists. Blank lines and `#` comments are skipped;
+    an optional `export ` prefix and surrounding quotes on values are stripped.
+    """
+    for candidate in (
+        Path(__file__).resolve().parent / ".env",
+        Path.cwd() / ".env",
+    ):
+        if candidate.exists():
+            env_path = candidate
+            break
+    else:
+        return {}
+
+    data = {}
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        data[key] = value
+    return data
+
+
+def tidal_credentials() -> "tuple[str | None, str | None]":
+    """Resolve Tidal API credentials: env vars first, then the .env file."""
+    client_id = os.environ.get("TIDAL_CLIENT_ID")
+    client_secret = os.environ.get("TIDAL_CLIENT_SECRET")
+    if client_id or client_secret:
+        return client_id, client_secret
+    env = load_env_file()
+    return env.get("id"), env.get("secret")
 
 QUALITY_MAP = {
     "HI_RES_LOSSLESS": tidalapi.Quality.hi_res_lossless,
@@ -45,9 +95,45 @@ def out(data):
     sys.stdout.flush()
 
 
-def make_session(quality=None) -> tidalapi.Session:
+def make_session(quality=None, use_env=True) -> tidalapi.Session:
     config = tidalapi.Config(quality=quality) if quality else tidalapi.Config()
-    return tidalapi.Session(config)
+    client_id, client_secret = tidal_credentials() if use_env else (None, None)
+    if client_id:
+        config.client_id = client_id
+        # tidalapi falls back to client_id when no secret is provided
+        config.client_secret = client_secret or client_id
+    session = tidalapi.Session(config)
+    # Remember which credentials this session was created with: a token issued
+    # for one client_id cannot be refreshed by another.
+    session.uses_env_credentials = bool(use_env and client_id)
+    return session
+
+
+def open_session(quality=None) -> tidalapi.Session:
+    """Load the saved session, falling back to tidalapi's built-in credentials
+    when the .env credentials cannot use the saved token."""
+    session = make_session(quality)
+    if load_session(session):
+        return session
+    if session.uses_env_credentials:
+        fallback = make_session(quality, use_env=False)
+        if load_session(fallback):
+            return fallback
+    return session
+
+
+def start_oauth(session):
+    """Start the OAuth device flow, falling back to tidalapi's built-in
+    credentials when Tidal rejects the .env ones (e.g. not a Limited Input
+    Device client). Returns (session, link_login, future)."""
+    try:
+        link_login, future = session.login_oauth()
+    except Exception:
+        if not session.uses_env_credentials:
+            raise
+        session = make_session(use_env=False)
+        link_login, future = session.login_oauth()
+    return session, link_login, future
 
 
 def load_session(session: tidalapi.Session) -> bool:
@@ -63,7 +149,7 @@ def save_session(session: tidalapi.Session):
     session.save_session_to_file(SESSION_FILE)
 
 
-# ─── Handlers reusables (retornan dict/list, usados por CLI y daemon) ─────────
+# ─── Handlers réutilisables (retournent dict/list, utilisés par CLI et daemon) ─
 
 
 def _track_dict(t: tidalapi.Track) -> dict:
@@ -105,9 +191,9 @@ def handle_stream(session, track_id, quality=None):
     q_str = quality or "LOSSLESS"
     last_error = ""
     for q in FALLBACK_CHAIN.get(q_str, ["LOSSLESS", "HIGH"]):
-        tmp_session = make_session(quality=QUALITY_MAP[q])
-        if not load_session(tmp_session):
-            raise Exception("No autenticado")
+        tmp_session = open_session(quality=QUALITY_MAP[q])
+        if not tmp_session.check_login():
+            raise Exception("Non authentifié")
         try:
             track = tmp_session.track(track_id)
             url = track.get_url()
@@ -123,7 +209,7 @@ def handle_stream(session, track_id, quality=None):
         except Exception as e:
             last_error = str(e)
             continue
-    raise Exception(f"No se pudo obtener stream en ninguna calidad: {last_error}")
+    raise Exception(f"Impossible d'obtenir le stream dans aucune qualité : {last_error}")
 
 
 def handle_cover(session, track_id):
@@ -204,7 +290,7 @@ def handle_album_tracks(session, album_id):
     return [_track_dict(t) for t in tracks]
 
 
-# ─── Daemon mode (JSON-RPC persistente sobre stdin/stdout) ──────────────────
+# ─── Mode daemon (JSON-RPC persistant sur stdin/stdout) ────────────────────
 
 
 HANDLERS = {
@@ -224,8 +310,7 @@ HANDLERS = {
 
 def run_daemon():
     quality = "LOSSLESS"
-    session = make_session()
-    load_session(session)
+    session = open_session()
     auth_in_progress = False
 
     for line in sys.stdin:
@@ -248,14 +333,14 @@ def run_daemon():
 
         try:
             if method == "auth_start":
-                link_login, future = session.login_oauth()
+                session, link_login, future = start_oauth(session)
                 url = str(link_login.verification_uri_complete)
                 code = str(link_login.user_code)
 
-                def wait_and_save():
+                def wait_and_save(s=session):
                     try:
                         future.result()
-                        save_session(session)
+                        save_session(s)
                     except Exception:
                         pass
 
@@ -273,7 +358,7 @@ def run_daemon():
 
             elif method in HANDLERS:
                 if not session.check_login():
-                    out({"id": req_id, "error": "No autenticado"})
+                    out({"id": req_id, "error": "Non authentifié"})
                     continue
                 handler = HANDLERS[method]
                 if method == "stream" and "quality" not in params:
@@ -282,18 +367,17 @@ def run_daemon():
                 out({"id": req_id, "result": result})
 
             else:
-                out({"id": req_id, "error": f"Metodo desconocido: {method}"})
+                out({"id": req_id, "error": f"Méthode inconnue : {method}"})
 
         except Exception as e:
             out({"id": req_id, "error": str(e)})
 
 
-# ─── Comandos CLI (legacy) ──────────────────────────────────────────────────
+# ─── Commandes CLI (legacy) ──────────────────────────────────────────────────
 
 
 def cli_auth_start():
-    session = make_session()
-    link_login, future = session.login_oauth()
+    session, link_login, future = start_oauth(make_session())
     url = str(link_login.verification_uri_complete)
     code = str(link_login.user_code)
     out({"url": url, "code": code})
@@ -306,15 +390,16 @@ def cli_auth_start():
 
 
 def cli_auth_poll():
-    session = make_session()
-    authed = load_session(session)
-    out({"authenticated": authed})
+    # open_session falls back to tidalapi's credentials when the saved token
+    # was not issued for the .env client_id.
+    session = open_session()
+    out({"authenticated": session.check_login()})
 
 
 def cli_search(query, limit=20):
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_search(session, query, limit))
@@ -323,9 +408,9 @@ def cli_search(query, limit=20):
 
 
 def cli_stream(track_id, quality="LOSSLESS"):
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_stream(session, track_id, quality))
@@ -334,9 +419,9 @@ def cli_stream(track_id, quality="LOSSLESS"):
 
 
 def cli_cover(track_id):
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_cover(session, track_id))
@@ -345,9 +430,9 @@ def cli_cover(track_id):
 
 
 def cli_playlists():
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_playlists(session))
@@ -356,9 +441,9 @@ def cli_playlists():
 
 
 def cli_playlist_tracks(uuid):
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_playlist_tracks(session, uuid))
@@ -367,9 +452,9 @@ def cli_playlist_tracks(uuid):
 
 
 def cli_mixes():
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_mixes(session))
@@ -378,9 +463,9 @@ def cli_mixes():
 
 
 def cli_mix_tracks(mix_id):
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_mix_tracks(session, mix_id))
@@ -389,9 +474,9 @@ def cli_mix_tracks(mix_id):
 
 
 def cli_favorite_tracks():
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_favorite_tracks(session))
@@ -400,9 +485,9 @@ def cli_favorite_tracks():
 
 
 def cli_favorite_albums():
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_favorite_albums(session))
@@ -411,9 +496,9 @@ def cli_favorite_albums():
 
 
 def cli_lyrics(track_id):
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_lyrics(session, track_id))
@@ -422,9 +507,9 @@ def cli_lyrics(track_id):
 
 
 def cli_album_tracks(album_id):
-    session = make_session()
-    if not load_session(session):
-        out({"error": "No autenticado"})
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
         return
     try:
         out(handle_album_tracks(session, album_id))
@@ -442,7 +527,7 @@ if __name__ == "__main__":
     args = sys.argv[1:]
 
     if not args:
-        out({"error": "Uso: tidal.py <auth start|auth poll|search ...>"})
+        out({"error": "Usage : tidal.py <auth start|auth poll|search ...>"})
         sys.exit(1)
 
     match args:
@@ -477,5 +562,5 @@ if __name__ == "__main__":
         case ["album_tracks", album_id]:
             cli_album_tracks(int(album_id))
         case _:
-            out({"error": f"Comando desconocido: {args}"})
+            out({"error": f"Commande inconnue : {args}"})
             sys.exit(1)

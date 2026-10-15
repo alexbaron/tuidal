@@ -212,7 +212,7 @@ impl App {
             fav_albums: Vec::new(),
             fav_album_selected: 0,
             collection_view: CollectionView::Tracks,
-            lang: Lang::Es,
+            lang: Lang::Fr,
             quality: Quality::Lossless,
             shuffle: false,
             repeat: RepeatMode::All,
@@ -227,7 +227,7 @@ impl App {
     }
 
     fn tx(&self) -> UnboundedSender<AppEvent> {
-        self.event_tx.clone().expect("event_tx no inicializado")
+        self.event_tx.clone().expect("event_tx non initialisé")
     }
 
     pub fn handle_event(&mut self, event: AppEvent) {
@@ -469,7 +469,7 @@ impl App {
         }
     }
 
-    // ── Background tasks (simplificados — usan Arc<TidalDaemonClient>) ──────
+    // ── Background tasks (simplifiés — utilisent Arc<TidalDaemonClient>) ────
 
     pub fn do_search_bg(&mut self) {
         if !self.authenticated {

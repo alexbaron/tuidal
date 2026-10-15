@@ -1,7 +1,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
-    Es,
+    #[serde(alias = "es")]
+    Fr,
     En,
     De,
     Ro,
@@ -82,68 +83,68 @@ pub struct Strings {
     pub status_added_to_queue: &'static str,
 }
 
-static ES: Strings = Strings {
-    tab_search: "Buscar",
-    tab_queue: "Cola",
-    tab_now: "Ahora",
-    tab_library: "Biblioteca",
-    search_placeholder: "Presiona / para buscar...",
-    search_results_title: "Resultados",
-    queue_title: "Cola de reproducción",
-    now_playing_empty: "Sin reproducción — presiona Enter en una canción",
-    now_playing_title: "◈ Ahora reproduciendo",
-    now_lyrics: "Letras",
-    now_no_lyrics: "Letras no disponibles",
-    loading_image: "⟳ Cargando\n  imagen...",
-    loading: "  ⟳ Cargando...",
-    not_authenticated: "  Presiona L para iniciar sesión en Tidal",
-    no_results_hint: "  Sin resultados — busca con /",
-    col_title: "  Título",
-    col_artist: "Artista",
-    col_album: "Álbum",
-    col_duration: "Dur.",
-    player_stopped: "Sin reproducción",
-    hint_play: "reproducir",
-    hint_pause: "pausa",
-    hint_next_prev: "sig/ant",
-    hint_seek: "seek",
-    hint_volume: "volumen",
-    hint_view: "vista",
-    hint_quality: "calidad",
-    hint_quit: "salir",
-    hint_library: "biblioteca",
-    hint_fav_tracks: "fav tracks",
-    hint_fav_albums: "fav álbumes",
-    hint_lang: "idioma",
-    hint_add_queue: "añadir cola",
-    library_loading: "  ⟳ Cargando biblioteca...",
-    library_hint: "  Presiona 'i' para cargar playlists y mixes",
-    library_title: "Biblioteca",
-    col_name: "Nombre",
+static FR: Strings = Strings {
+    tab_search: "Rechercher",
+    tab_queue: "File",
+    tab_now: "Lecture",
+    tab_library: "Bibliothèque",
+    search_placeholder: "Appuyez sur / pour rechercher...",
+    search_results_title: "Résultats",
+    queue_title: "File de lecture",
+    now_playing_empty: "Aucune lecture — appuyez sur Entrée sur un morceau",
+    now_playing_title: "◈ Lecture en cours",
+    now_lyrics: "Paroles",
+    now_no_lyrics: "Paroles non disponibles",
+    loading_image: "⟳ Chargement\n  image...",
+    loading: "  ⟳ Chargement...",
+    not_authenticated: "  Appuyez sur L pour vous connecter à Tidal",
+    no_results_hint: "  Aucun résultat — recherchez avec /",
+    col_title: "  Titre",
+    col_artist: "Artiste",
+    col_album: "Album",
+    col_duration: "Durée",
+    player_stopped: "Aucune lecture",
+    hint_play: "lire",
+    hint_pause: "pause",
+    hint_next_prev: "suiv/préc",
+    hint_seek: "avancer",
+    hint_volume: "volume",
+    hint_view: "vue",
+    hint_quality: "qualité",
+    hint_quit: "quitter",
+    hint_library: "bibliothèque",
+    hint_fav_tracks: "titres fav",
+    hint_fav_albums: "albums fav",
+    hint_lang: "langue",
+    hint_add_queue: "ajouter file",
+    library_loading: "  ⟳ Chargement de la bibliothèque...",
+    library_hint: "  Appuyez sur 'i' pour charger les playlists et mixes",
+    library_title: "Bibliothèque",
+    col_name: "Nom",
     col_info: "Info",
-    col_type: "Tipo",
-    fav_albums_empty: "  Sin álbumes favoritos",
-    fav_albums_title: "Álbumes favoritos",
-    col_tracks: "Tracks",
-    login_title_text: "  Inicia sesión en Tidal",
-    login_open_url: "  1. Abre este URL:",
-    login_code_prefix: "  2. Código: ",
-    login_waiting: "  Esperando autorización...",
-    login_overlay_title: " ◈ Autenticación ",
-    status_no_results: "Sin resultados",
-    status_auth_done: "✓ Autenticado con Tidal",
-    status_login_required: "Primero inicia sesión con 'L'",
-    status_login_required_short: "Inicia sesión primero (L)",
-    status_starting_login: "Iniciando login...",
-    status_loading_lib: "⟳ Cargando biblioteca...",
-    status_loading_playlist: "⟳ Cargando playlist...",
-    status_loading_mix: "⟳ Cargando mix...",
-    status_loading_fav_tracks: "⟳ Cargando canciones favoritas...",
-    status_loading_fav_albums: "⟳ Cargando álbumes favoritos...",
-    status_session_loading: "Cargando sesión...",
-    status_session_active: "✓ Sesión activa",
-    status_press_l: "Presiona 'L' para iniciar sesión en Tidal",
-    status_added_to_queue: "▶ Añadido a la cola",
+    col_type: "Type",
+    fav_albums_empty: "  Aucun album favori",
+    fav_albums_title: "Albums favoris",
+    col_tracks: "Titres",
+    login_title_text: "  Connectez-vous à Tidal",
+    login_open_url: "  1. Ouvrez cette URL :",
+    login_code_prefix: "  2. Code : ",
+    login_waiting: "  En attente d'autorisation...",
+    login_overlay_title: " ◈ Authentification ",
+    status_no_results: "Aucun résultat",
+    status_auth_done: "✓ Authentifié auprès de Tidal",
+    status_login_required: "Connectez-vous d'abord avec 'L'",
+    status_login_required_short: "Connectez-vous d'abord (L)",
+    status_starting_login: "Démarrage de la connexion...",
+    status_loading_lib: "⟳ Chargement de la bibliothèque...",
+    status_loading_playlist: "⟳ Chargement de la playlist...",
+    status_loading_mix: "⟳ Chargement du mix...",
+    status_loading_fav_tracks: "⟳ Chargement des titres favoris...",
+    status_loading_fav_albums: "⟳ Chargement des albums favoris...",
+    status_session_loading: "Chargement de la session...",
+    status_session_active: "✓ Session active",
+    status_press_l: "Appuyez sur 'L' pour vous connecter à Tidal",
+    status_added_to_queue: "▶ Ajouté à la file",
 };
 
 static EN: Strings = Strings {
@@ -341,7 +342,7 @@ static RO: Strings = Strings {
 impl Lang {
     pub fn strings(self) -> &'static Strings {
         match self {
-            Lang::Es => &ES,
+            Lang::Fr => &FR,
             Lang::En => &EN,
             Lang::De => &DE,
             Lang::Ro => &RO,
@@ -350,16 +351,16 @@ impl Lang {
 
     pub fn cycle(self) -> Self {
         match self {
-            Lang::Es => Lang::En,
+            Lang::Fr => Lang::En,
             Lang::En => Lang::De,
             Lang::De => Lang::Ro,
-            Lang::Ro => Lang::Es,
+            Lang::Ro => Lang::Fr,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Lang::Es => "ES",
+            Lang::Fr => "FR",
             Lang::En => "EN",
             Lang::De => "DE",
             Lang::Ro => "RO",
@@ -370,7 +371,7 @@ impl Lang {
 
     pub fn results_count(self, n: usize) -> String {
         match self {
-            Lang::Es => format!("{n} resultados"),
+            Lang::Fr => format!("{n} résultats"),
             Lang::En => format!("{n} results"),
             Lang::De => format!("{n} Ergebnisse"),
             Lang::Ro => format!("{n} rezultate"),
@@ -379,7 +380,7 @@ impl Lang {
 
     pub fn search_error(self, e: &str) -> String {
         match self {
-            Lang::Es => format!("✗ Error búsqueda: {e}"),
+            Lang::Fr => format!("✗ Erreur de recherche : {e}"),
             Lang::En => format!("✗ Search error: {e}"),
             Lang::De => format!("✗ Suchfehler: {e}"),
             Lang::Ro => format!("✗ Eroare căutare: {e}"),
@@ -388,7 +389,7 @@ impl Lang {
 
     pub fn stream_error(self, e: &str) -> String {
         match self {
-            Lang::Es => format!("✗ Error stream: {e}"),
+            Lang::Fr => format!("✗ Erreur de stream : {e}"),
             Lang::En => format!("✗ Stream error: {e}"),
             Lang::De => format!("✗ Stream-Fehler: {e}"),
             Lang::Ro => format!("✗ Eroare stream: {e}"),
@@ -397,7 +398,7 @@ impl Lang {
 
     pub fn searching(self, q: &str) -> String {
         match self {
-            Lang::Es => format!("Buscando \"{q}\"..."),
+            Lang::Fr => format!("Recherche de \"{q}\"..."),
             Lang::En => format!("Searching \"{q}\"..."),
             Lang::De => format!("Suche \"{q}\"..."),
             Lang::Ro => format!("Se caută \"{q}\"..."),
@@ -406,7 +407,7 @@ impl Lang {
 
     pub fn loading_stream(self, title: &str) -> String {
         match self {
-            Lang::Es => format!("⟳ Obteniendo stream: {title}..."),
+            Lang::Fr => format!("⟳ Récupération du stream : {title}..."),
             Lang::En => format!("⟳ Getting stream: {title}..."),
             Lang::De => format!("⟳ Stream wird geladen: {title}..."),
             Lang::Ro => format!("⟳ Se obține stream: {title}..."),
@@ -415,7 +416,7 @@ impl Lang {
 
     pub fn browser_opened(self, code: &str) -> String {
         match self {
-            Lang::Es => format!("Browser abierto. Código: {code}"),
+            Lang::Fr => format!("Navigateur ouvert. Code : {code}"),
             Lang::En => format!("Browser opened. Code: {code}"),
             Lang::De => format!("Browser geöffnet. Code: {code}"),
             Lang::Ro => format!("Browser deschis. Cod: {code}"),
@@ -424,7 +425,7 @@ impl Lang {
 
     pub fn browser_failed(self, e: &str, url: &str) -> String {
         match self {
-            Lang::Es => format!("No se pudo abrir browser ({e}): {url}"),
+            Lang::Fr => format!("Impossible d'ouvrir le navigateur ({e}) : {url}"),
             Lang::En => format!("Could not open browser ({e}): {url}"),
             Lang::De => format!("Browser konnte nicht geöffnet werden ({e}): {url}"),
             Lang::Ro => format!("Nu s-a putut deschide browser-ul ({e}): {url}"),
@@ -433,7 +434,7 @@ impl Lang {
 
     pub fn auth_error(self, e: &str) -> String {
         match self {
-            Lang::Es => format!("✗ Error auth: {e}"),
+            Lang::Fr => format!("✗ Erreur d'authentification : {e}"),
             Lang::En => format!("✗ Auth error: {e}"),
             Lang::De => format!("✗ Auth-Fehler: {e}"),
             Lang::Ro => format!("✗ Eroare autentificare: {e}"),
@@ -442,7 +443,7 @@ impl Lang {
 
     pub fn library_loaded(self, playlists: usize, mixes: usize) -> String {
         match self {
-            Lang::Es => format!("✓ {playlists} playlists, {mixes} mixes"),
+            Lang::Fr => format!("✓ {playlists} playlists, {mixes} mixes"),
             Lang::En => format!("✓ {playlists} playlists, {mixes} mixes"),
             Lang::De => format!("✓ {playlists} Playlists, {mixes} Mixes"),
             Lang::Ro => format!("✓ {playlists} playlisturi, {mixes} mixuri"),
@@ -451,7 +452,7 @@ impl Lang {
 
     pub fn tracks_loaded(self, n: usize) -> String {
         match self {
-            Lang::Es => format!("✓ {n} tracks cargados"),
+            Lang::Fr => format!("✓ {n} titres chargés"),
             Lang::En => format!("✓ {n} tracks loaded"),
             Lang::De => format!("✓ {n} Titel geladen"),
             Lang::Ro => format!("✓ {n} piese încărcate"),
@@ -460,7 +461,7 @@ impl Lang {
 
     pub fn fav_tracks_loaded(self, n: usize) -> String {
         match self {
-            Lang::Es => format!("✓ {n} canciones favoritas en cola"),
+            Lang::Fr => format!("✓ {n} titres favoris dans la file"),
             Lang::En => format!("✓ {n} favorite tracks in queue"),
             Lang::De => format!("✓ {n} Lieblingstitel in der Warteschlange"),
             Lang::Ro => format!("✓ {n} piese favorite în coadă"),
@@ -469,7 +470,7 @@ impl Lang {
 
     pub fn fav_albums_loaded(self, n: usize) -> String {
         match self {
-            Lang::Es => format!("✓ {n} álbumes en colección"),
+            Lang::Fr => format!("✓ {n} albums dans la collection"),
             Lang::En => format!("✓ {n} albums in collection"),
             Lang::De => format!("✓ {n} Alben in der Sammlung"),
             Lang::Ro => format!("✓ {n} albume în colecție"),
@@ -478,7 +479,7 @@ impl Lang {
 
     pub fn quality_changed(self, label: &str) -> String {
         match self {
-            Lang::Es => format!("Calidad: {label}"),
+            Lang::Fr => format!("Qualité : {label}"),
             Lang::En => format!("Quality: {label}"),
             Lang::De => format!("Qualität: {label}"),
             Lang::Ro => format!("Calitate: {label}"),
@@ -487,7 +488,7 @@ impl Lang {
 
     pub fn loading_album(self, title: &str) -> String {
         match self {
-            Lang::Es => format!("⟳ Cargando {title}..."),
+            Lang::Fr => format!("⟳ Chargement de {title}..."),
             Lang::En => format!("⟳ Loading {title}..."),
             Lang::De => format!("⟳ {title} wird geladen..."),
             Lang::Ro => format!("⟳ Se încarcă {title}..."),
@@ -496,7 +497,7 @@ impl Lang {
 
     pub fn library_title_with_counts(self, playlists: usize, mixes: usize) -> String {
         match self {
-            Lang::Es => format!(" Biblioteca ({playlists} playlists, {mixes} mixes) "),
+            Lang::Fr => format!(" Bibliothèque ({playlists} playlists, {mixes} mixes) "),
             Lang::En => format!(" Library ({playlists} playlists, {mixes} mixes) "),
             Lang::De => format!(" Bibliothek ({playlists} Playlists, {mixes} Mixes) "),
             Lang::Ro => format!(" Bibliotecă ({playlists} playlisturi, {mixes} mixuri) "),
@@ -505,7 +506,7 @@ impl Lang {
 
     pub fn fav_albums_title_with_count(self, n: usize) -> String {
         match self {
-            Lang::Es => format!(" ◆ Álbumes favoritos ({n}) — Enter para cargar "),
+            Lang::Fr => format!(" ◆ Albums favoris ({n}) — Entrée pour charger "),
             Lang::En => format!(" ◆ Favorite Albums ({n}) — Enter to load "),
             Lang::De => format!(" ◆ Lieblingsalben ({n}) — Enter zum Laden "),
             Lang::Ro => format!(" ◆ Albume favorite ({n}) — Enter pentru a încărca "),
@@ -514,7 +515,7 @@ impl Lang {
 
     pub fn tracks_count(self, n: u32) -> String {
         match self {
-            Lang::Es => format!("{n} tracks"),
+            Lang::Fr => format!("{n} titres"),
             Lang::En => format!("{n} tracks"),
             Lang::De => format!("{n} Titel"),
             Lang::Ro => format!("{n} piese"),
@@ -523,7 +524,7 @@ impl Lang {
 
     pub fn lang_changed(self) -> String {
         match self {
-            Lang::Es => "Idioma: Español".to_string(),
+            Lang::Fr => "Langue : Français".to_string(),
             Lang::En => "Language: English".to_string(),
             Lang::De => "Sprache: Deutsch".to_string(),
             Lang::Ro => "Limbă: Română".to_string(),

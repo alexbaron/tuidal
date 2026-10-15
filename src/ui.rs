@@ -235,16 +235,16 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let img_cols = area.height.saturating_sub(2); // aprox cuadrado en celdas
+    let img_cols = area.height.saturating_sub(2); // environ carré en cellules
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(img_cols), // cuadrado
-            Constraint::Min(0),           // resto para info + letras
+            Constraint::Length(img_cols), // carré
+            Constraint::Min(0),           // reste pour info + paroles
         ])
         .split(area);
 
-    // ── Columna izquierda: carátula ─────────────────────────────────────────
+    // ── Colonne gauche : pochette ─────────────────────────────────────────
     let img_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -279,7 +279,7 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
 
-    // ── Columna derecha: info (arriba) + letras (abajo) ────────────────────
+    // ── Colonne droite : info (haut) + paroles (bas) ────────────────────
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(12), Constraint::Min(0)])
@@ -348,7 +348,7 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
 
-    // ── Letras ──────────────────────────────────────────────────────────────
+    // ── Paroles ──────────────────────────────────────────────────────────────
     draw_lyrics(f, app, right_chunks[1]);
 }
 
@@ -797,7 +797,7 @@ fn draw_login_overlay(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
-    // Si estamos en vista de álbumes favoritos
+    // Si on est en vue albums favoris
     //if app.collection_view == app::CollectionView::Albums {
     if app.collection_view == CollectionView::Albums {
         draw_fav_albums(f, app, area);

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-tidal.py — Subproceso intermediario entre Rust y Tidal via tidalapi.
+tidal.py — Sous-processus intermédiaire entre Rust et Tidal via tidalapi.
 
-Uso:
+Usage :
   python3 tidal.py auth start
   python3 tidal.py auth poll
   python3 tidal.py search "Daft Punk"
   python3 tidal.py stream 12345
   python3 tidal.py stream 12345 HI_RES_LOSSLESS
 
-Siempre imprime JSON en stdout. Errores van a stderr.
-Instalar: pip install tidalapi --break-system-packages
+Imprime toujours du JSON sur stdout. Les erreurs vont sur stderr.
+Installer : pip install tidalapi --break-system-packages
 """
 
 import json
@@ -45,14 +45,14 @@ def save_session(session: tidalapi.Session):
     Path(SESSION_FILE).parent.mkdir(parents=True, exist_ok=True)
     session.save_oauth_session(SESSION_FILE)
 
-# ─── Comandos ─────────────────────────────────────────────────────────────────
+# ─── Commandes ─────────────────────────────────────────────────────────────────
 
 def cmd_auth_start():
-    """Inicia OAuth Device Flow. Guarda estado en POLL_FILE para que poll lo use."""
+    """Démarre le OAuth Device Flow. Sauvegarde l'état dans POLL_FILE pour poll."""
     session = make_session()
 
-    # login_oauth() devuelve (future, url_obj)
-    # Necesitamos guardar el future en un hilo y el url para mostrarlo al usuario
+    # login_oauth() renvoie (future, url_obj)
+    # On doit garder le future dans un thread et l'url pour l'afficher à l'utilisateur
     result = {}
     event  = threading.Event()
 
@@ -62,7 +62,7 @@ def cmd_auth_start():
             result["url"]  = str(url)
             result["code"] = getattr(url, "user_code", "")
             event.set()
-            future.result()  # bloquea hasta que el usuario autorice
+            future.result()  # bloque jusqu'à ce que l'utilisateur autorise
             save_session(session)
             Path(POLL_FILE).write_text(json.dumps({"done": True}))
         except Exception as e:
@@ -73,19 +73,19 @@ def cmd_auth_start():
     event.wait(timeout=10)
 
     if "url" not in result:
-        err("Timeout esperando URL de auth")
+        err("Timeout en attendant l'URL d'auth")
         return
 
-    # Guardar el hilo en POLL_FILE como "pendiente"
+    # Sauvegarder le thread dans POLL_FILE comme "en attente"
     Path(POLL_FILE).write_text(json.dumps({"done": False}))
 
     out({"url": result["url"], "code": result["code"]})
 
-    # Esperar en background a que el usuario autorice
+    # Attendre en background que l'utilisateur autorise
     t.join()
 
 def cmd_auth_poll():
-    """Verifica si el OAuth ya completó (lee POLL_FILE)."""
+    """Vérifie si le OAuth est terminé (lit POLL_FILE)."""
     poll_path = Path(POLL_FILE)
     session   = make_session()
 
@@ -110,7 +110,7 @@ def cmd_auth_poll():
 def cmd_search(query: str, limit: int = 20):
     session = make_session()
     if not load_session(session):
-        err("No autenticado")
+        err("Non authentifié")
         return
 
     try:
@@ -123,7 +123,7 @@ def cmd_search(query: str, limit: int = 20):
 def cmd_stream(track_id: int, quality_str: str = "LOSSLESS"):
     session = make_session()
     if not load_session(session):
-        err("No autenticado")
+        err("Non authentifié")
         return
 
     quality_map = {
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     args = sys.argv[1:]
 
     if not args:
-        err("Uso: tidal.py <auth start|auth poll|search <query>|stream <id> [quality]>")
+        err("Usage : tidal.py <auth start|auth poll|search <query>|stream <id> [quality]>")
         sys.exit(1)
 
     match args:
@@ -183,5 +183,5 @@ if __name__ == "__main__":
         case ["stream", track_id, quality]:
             cmd_stream(int(track_id), quality)
         case _:
-            err(f"Comando desconocido: {args}")
+            err(f"Commande inconnue : {args}")
             sys.exit(1)
