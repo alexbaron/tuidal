@@ -1,3 +1,4 @@
+use crate::audio_fx::{AudioFx, FxControl, PRESETS};
 use crate::i18n::Lang;
 use crate::spectrum::{AnalysisBuffer, SpectrumAnalyzer};
 use crate::player::{Player, TrackInfo};
@@ -26,6 +27,7 @@ pub enum Tab {
     Queue,
     Now,
     Visualizer,
+    Effects,
     Library,
 }
 
@@ -186,6 +188,10 @@ pub struct App {
     pub spectrum: SpectrumAnalyzer,
     /// Band count requested by the UI (depends on widget width).
     pub spectrum_bands_hint: usize,
+    /// Audio effects applied live through the mpv af filter chain.
+    pub audio_fx: AudioFx,
+    /// Selected row in the Effects tab (index into FxControl::ALL).
+    pub fx_cursor: usize,
 }
 
 impl App {
@@ -231,6 +237,8 @@ impl App {
             analysis_cancel: None,
             spectrum: SpectrumAnalyzer::new(),
             spectrum_bands_hint: 96,
+            audio_fx: AudioFx::default(),
+            fx_cursor: 0,
         }
     }
 
@@ -514,7 +522,7 @@ impl App {
         let track = match self.active_tab {
             Tab::Search => self.search_results.get(self.selected).cloned(),
             Tab::Queue => self.queue.get(self.selected).cloned(),
-            Tab::Now | Tab::Visualizer | Tab::Library => return,
+            Tab::Now | Tab::Visualizer | Tab::Effects | Tab::Library => return,
         };
         let Some(track) = track else { return };
         if self.queue.iter().any(|t| t.id == track.id) {
@@ -533,7 +541,7 @@ impl App {
         let track = match self.active_tab {
             Tab::Search => self.search_results.get(self.selected).cloned(),
             Tab::Queue => self.queue.get(self.selected).cloned(),
-            Tab::Now | Tab::Visualizer | Tab::Library => return,
+            Tab::Now | Tab::Visualizer | Tab::Effects | Tab::Library => return,
         };
         let Some(track) = track else { return };
         let queue_index = if self.active_tab == Tab::Search {
@@ -820,7 +828,8 @@ impl App {
             Tab::Search => Tab::Queue,
             Tab::Queue => Tab::Now,
             Tab::Now => Tab::Visualizer,
-            Tab::Visualizer => Tab::Library,
+            Tab::Visualizer => Tab::Effects,
+            Tab::Effects => Tab::Library,
             Tab::Library => {
                 self.collection_view = CollectionView::Tracks;
                 Tab::Search
@@ -833,7 +842,7 @@ impl App {
         match self.active_tab {
             Tab::Search => self.search_results.len(),
             Tab::Queue => self.queue.len(),
-            Tab::Now | Tab::Visualizer => 0,
+            Tab::Now | Tab::Visualizer | Tab::Effects => 0,
             Tab::Library => self.playlists.len() + self.mixes.len(),
         }
     }
@@ -995,11 +1004,123 @@ impl App {
         self.spectrum.update(&buf, self.player.elapsed, n_bands);
     }
 
+    // ── Audio effects ─────────────────────────────────────────────────────
+
+    /// Move the Effects tab cursor by `delta` rows (wrapping).
+    pub fn fx_move(&mut self, delta: i32) {
+        let n = FxControl::ALL.len() as i32;
+        self.fx_cursor = ((self.fx_cursor as i32 + delta).rem_euclid(n)) as usize;
+    }
+
+    /// Cycle the equalizer preset regardless of the cursor position.
+    pub fn fx_cycle_preset(&mut self, dir: i32) {
+        let len = PRESETS.len() as i32;
+        let next = match self.audio_fx.matching_preset() {
+            Some(i) => (i as i32 + dir).rem_euclid(len) as usize,
+            None => {
+                if dir >= 0 {
+                    0
+                } else {
+                    (len - 1) as usize
+                }
+            }
+        };
+        self.audio_fx.apply_preset(next);
+        self.apply_audio_fx();
+    }
+
+    fn fx_toggle_bool(&mut self, c: FxControl) {
+        match c {
+            FxControl::Enabled => self.audio_fx.enabled = !self.audio_fx.enabled,
+            FxControl::Crossfeed => self.audio_fx.crossfeed = !self.audio_fx.crossfeed,
+            FxControl::Echo => self.audio_fx.echo = !self.audio_fx.echo,
+            FxControl::Compressor => self.audio_fx.compressor = !self.audio_fx.compressor,
+            FxControl::Normalize => self.audio_fx.normalize = !self.audio_fx.normalize,
+            _ => {}
+        }
+    }
+
+    /// Adjust the control under the cursor by `dir` steps.
+    pub fn fx_adjust(&mut self, dir: i32) {
+        match FxControl::ALL[self.fx_cursor] {
+            c @ (FxControl::Enabled
+            | FxControl::Crossfeed
+            | FxControl::Echo
+            | FxControl::Compressor
+            | FxControl::Normalize) => {
+                let _ = dir;
+                self.fx_toggle_bool(c);
+            }
+            FxControl::Preset => {
+                self.fx_cycle_preset(dir);
+                return; // fx_cycle_preset already applies
+            }
+            FxControl::Balance => {
+                self.audio_fx.balance = (self.audio_fx.balance + 5 * dir as i8).clamp(-100, 100)
+            }
+            FxControl::Bass => {
+                self.audio_fx.bass = (self.audio_fx.bass + dir as i8).clamp(-15, 15)
+            }
+            FxControl::Treble => {
+                self.audio_fx.treble = (self.audio_fx.treble + dir as i8).clamp(-15, 15)
+            }
+            FxControl::Eq(i) => {
+                self.audio_fx.eq[i] = (self.audio_fx.eq[i] + dir as i8).clamp(-12, 12)
+            }
+            FxControl::StereoWidth => {
+                self.audio_fx.stereo_width =
+                    (self.audio_fx.stereo_width as i32 + 10 * dir).clamp(0, 200) as u8
+            }
+        }
+        self.apply_audio_fx();
+    }
+
+    /// Enter on the Effects tab: toggle booleans, cycle presets, or reset the
+    /// slider under the cursor to its neutral value.
+    pub fn fx_toggle(&mut self) {
+        match FxControl::ALL[self.fx_cursor] {
+            c @ (FxControl::Enabled
+            | FxControl::Crossfeed
+            | FxControl::Echo
+            | FxControl::Compressor
+            | FxControl::Normalize) => self.fx_toggle_bool(c),
+            FxControl::Preset => {
+                self.fx_cycle_preset(1);
+                return;
+            }
+            FxControl::Balance => self.audio_fx.balance = 0,
+            FxControl::Bass => self.audio_fx.bass = 0,
+            FxControl::Treble => self.audio_fx.treble = 0,
+            FxControl::Eq(i) => self.audio_fx.eq[i] = 0,
+            FxControl::StereoWidth => self.audio_fx.stereo_width = 100,
+        }
+        self.apply_audio_fx();
+    }
+
+    pub fn fx_reset_all(&mut self) {
+        self.audio_fx.reset();
+        self.apply_audio_fx();
+    }
+
+    /// Push the current filter chain to mpv and persist it.
+    fn apply_audio_fx(&mut self) {
+        let af = self.audio_fx.to_mpv_af();
+        let n = if af.is_empty() {
+            0
+        } else {
+            self.audio_fx.active_filters().len()
+        };
+        self.player.set_audio_filters(&af);
+        self.status_msg = self.lang.fx_status(n);
+        self.save_settings();
+    }
+
     fn save_settings(&self) {
         let settings = Settings {
             lang: self.lang,
             quality: self.quality,
             volume: self.player.volume,
+            audio_fx: self.audio_fx.clone(),
         };
         let path = settings_path();
         if let Some(parent) = path.parent() {
@@ -1017,6 +1138,10 @@ impl App {
                 self.lang = settings.lang;
                 self.quality = settings.quality;
                 self.player.volume = settings.volume.min(100);
+                self.audio_fx = settings.audio_fx;
+                // Nothing is playing yet: store the chain for the next play()
+                // instead of pushing it over IPC.
+                self.player.af = self.audio_fx.to_mpv_af();
             }
         }
     }
@@ -1042,6 +1167,8 @@ struct Settings {
     lang: Lang,
     quality: Quality,
     volume: u8,
+    #[serde(default)]
+    audio_fx: AudioFx,
 }
 
 fn settings_path() -> std::path::PathBuf {
@@ -1049,4 +1176,19 @@ fn settings_path() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("tuidal")
         .join("settings.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Old settings.json files have no audio_fx key: it must default cleanly.
+    #[test]
+    fn settings_without_audio_fx_defaults() {
+        let s: Settings = serde_json::from_str(
+            r#"{"lang":"fr","quality":"lossless","volume":80}"#,
+        )
+        .unwrap();
+        assert_eq!(s.audio_fx, AudioFx::default());
+    }
 }

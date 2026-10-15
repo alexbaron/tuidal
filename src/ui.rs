@@ -8,8 +8,8 @@ use ratatui::{
     text::{Line, Span},
     symbols::Marker,
     widgets::{
-        Axis, Block, BorderType, Borders, Cell, Chart, Clear, Dataset, GraphType, Padding,
-        Paragraph, Row, Table, Wrap,
+        Axis, Bar, BarChart, BarGroup, Block, BorderType, Borders, Cell, Chart, Clear, Dataset,
+        GraphType, Padding, Paragraph, Row, Table, Wrap,
     },
 };
 //use ratatui_image::{picker::Picker, StatefulImage, Resize};
@@ -92,6 +92,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("  ", Style::default()),
             tab_span(s.tab_visualizer, Tab::Visualizer, &app.active_tab),
             Span::styled("  ", Style::default()),
+            tab_span(s.tab_effects, Tab::Effects, &app.active_tab),
+            Span::styled("  ", Style::default()),
             tab_span(s.tab_library, Tab::Library, &app.active_tab),
         ]))
         .block(
@@ -151,6 +153,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         Tab::Queue => draw_queue_tab(f, app, area),
         Tab::Now => draw_now_tab(f, app, area),
         Tab::Visualizer => draw_visualizer_tab(f, app, area),
+        Tab::Effects => draw_effects_tab(f, app, area),
         Tab::Library => draw_library_tab(f, app, area),
     }
 }
@@ -710,6 +713,16 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
     );
 
     let s = app.lang.strings();
+    if app.active_tab == Tab::Effects {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("  {}", s.fx_hints),
+                Style::default().fg(DIM),
+            ))),
+            inner[2],
+        );
+        return;
+    }
     f.render_widget(
         Paragraph::new(Line::from(vec![
             hint_key("Enter", s.hint_play),
@@ -800,6 +813,221 @@ fn draw_login_overlay(f: &mut Frame, app: &App, area: Rect) {
         )
         .wrap(Wrap { trim: false }),
         popup,
+    );
+}
+
+/// Short EQ band labels: 31, 62, 125, 250, 500, 1k, 2k, 4k, 8k, 16k.
+const EQ_LABELS: [&str; 10] = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
+
+/// 21-cell ASCII slider for a value in [min, max], knob at position.
+fn slider_str(value: i32, min: i32, max: i32) -> String {
+    const W: usize = 21;
+    let pos = ((value - min) as f64 / (max - min) as f64 * (W - 1) as f64).round() as usize;
+    let mut s = String::with_capacity(W);
+    for i in 0..W {
+        s.push(if i == pos { '◆' } else { '─' });
+    }
+    s
+}
+
+fn draw_effects_tab(f: &mut Frame, app: &mut App, area: Rect) {
+    let s = app.lang.strings();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(12), Constraint::Min(0)])
+        .split(area);
+
+    // ── EQ block ──────────────────────────────────────────────────────────
+    let eq_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM))
+        .title(Span::styled(
+            format!(" {} ", s.fx_eq_title),
+            Style::default().fg(ACCENT),
+        ))
+        .style(Style::default().bg(BG2));
+    let cursor_control = crate::audio_fx::FxControl::ALL[app.fx_cursor];
+    let cursor_eq = match cursor_control {
+        crate::audio_fx::FxControl::Eq(i) => Some(i),
+        _ => None,
+    };
+    let bars: Vec<Bar> = app
+        .audio_fx
+        .eq
+        .iter()
+        .enumerate()
+        .map(|(i, g)| {
+            let selected = cursor_eq == Some(i);
+            Bar::default()
+                .value((i32::from(*g) + 12) as u64)
+                .text_value(format!("{g:+}"))
+                .label(EQ_LABELS[i].into())
+                .style(Style::default().fg(if selected { GOLD } else { ACCENT }))
+                .value_style(
+                    Style::default()
+                        .fg(if selected { GOLD } else { TEXT })
+                        .add_modifier(if selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )
+        })
+        .collect();
+    let chart = BarChart::default()
+        .data(BarGroup::default().bars(&bars))
+        .max(24)
+        .bar_width(5)
+        .bar_gap(2);
+    f.render_widget(chart.block(eq_block), chunks[0]);
+
+    // ── Controls block ────────────────────────────────────────────────────
+    let title = match app.audio_fx.matching_preset() {
+        Some(i) => format!(
+            " {} — {} ",
+            s.fx_title,
+            crate::audio_fx::PRESETS[i].0
+        ),
+        None => format!(" {} ", s.fx_title),
+    };
+    let ctrl_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM))
+        .title(Span::styled(title, Style::default().fg(ACCENT)))
+        .style(Style::default().bg(BG2));
+    let ctrl_inner = ctrl_block.inner(chunks[1]);
+    f.render_widget(ctrl_block, chunks[1]);
+
+    use crate::audio_fx::FxControl as C;
+    let no_mpv = !app.player.mpv_available || app.player.backend == crate::player::Backend::Ffplay;
+    let (warn_area, table_area) = if no_mpv {
+        let sp = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(ctrl_inner);
+        (Some(sp[0]), sp[1])
+    } else {
+        (None, ctrl_inner)
+    };
+    if let Some(w) = warn_area {
+        f.render_widget(
+            Paragraph::new(Span::styled(s.fx_no_mpv, Style::default().fg(RED))),
+            w,
+        );
+    }
+
+    let bool_box = |on: bool| if on { "[x]" } else { "[ ]" }.to_string();
+    let on_off = |on: bool| if on { s.fx_on } else { s.fx_off };
+
+    let rows: Vec<Row> = C::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let fx = &app.audio_fx;
+            let (name, slider, value): (String, String, String) = match *c {
+                C::Enabled => (
+                    s.fx_enabled.to_string(),
+                    bool_box(fx.enabled),
+                    on_off(fx.enabled).to_string(),
+                ),
+                C::Preset => {
+                    let name = fx
+                        .matching_preset()
+                        .map(|p| crate::audio_fx::PRESETS[p].0)
+                        .unwrap_or("Custom");
+                    (s.fx_preset.to_string(), format!("‹ {name} ›"), String::new())
+                }
+                C::Balance => (
+                    s.fx_balance.to_string(),
+                    slider_str(fx.balance as i32, -100, 100),
+                    match fx.balance.cmp(&0) {
+                        std::cmp::Ordering::Less => format!("L {}", -fx.balance),
+                        std::cmp::Ordering::Greater => format!("R {}", fx.balance),
+                        std::cmp::Ordering::Equal => s.fx_center.to_string(),
+                    },
+                ),
+                C::Bass => (
+                    s.fx_bass.to_string(),
+                    slider_str(fx.bass as i32, -15, 15),
+                    format!("{:+} dB", fx.bass),
+                ),
+                C::Treble => (
+                    s.fx_treble.to_string(),
+                    slider_str(fx.treble as i32, -15, 15),
+                    format!("{:+} dB", fx.treble),
+                ),
+                C::Eq(b) => (
+                    format!("  {}", EQ_LABELS[b]),
+                    slider_str(fx.eq[b] as i32, -12, 12),
+                    format!("{:+} dB", fx.eq[b]),
+                ),
+                C::StereoWidth => (
+                    s.fx_stereo_width.to_string(),
+                    slider_str(fx.stereo_width as i32, 0, 200),
+                    format!("{} %", fx.stereo_width),
+                ),
+                C::Crossfeed => (
+                    s.fx_crossfeed.to_string(),
+                    bool_box(fx.crossfeed),
+                    on_off(fx.crossfeed).to_string(),
+                ),
+                C::Echo => (
+                    s.fx_echo.to_string(),
+                    bool_box(fx.echo),
+                    on_off(fx.echo).to_string(),
+                ),
+                C::Compressor => (
+                    s.fx_compressor.to_string(),
+                    bool_box(fx.compressor),
+                    on_off(fx.compressor).to_string(),
+                ),
+                C::Normalize => (
+                    s.fx_normalize.to_string(),
+                    bool_box(fx.normalize),
+                    on_off(fx.normalize).to_string(),
+                ),
+            };
+            let sel = i == app.fx_cursor;
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    name,
+                    Style::default()
+                        .fg(if sel { ACCENT } else { TEXT })
+                        .add_modifier(if sel {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )),
+                Cell::from(Span::styled(slider, Style::default().fg(if sel { ACCENT } else { DIM }))),
+                Cell::from(Span::styled(value, Style::default().fg(MUTED))),
+            ])
+            .style(Style::default().bg(if sel {
+                BG3
+            } else if i % 2 == 0 {
+                BG
+            } else {
+                BG2
+            }))
+        })
+        .collect();
+
+    let mut state = ratatui::widgets::TableState::default();
+    state.select(Some(app.fx_cursor));
+    f.render_stateful_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Length(26),
+                Constraint::Length(23),
+                Constraint::Min(8),
+            ],
+        )
+        .row_highlight_style(Style::default().bg(BG3)),
+        table_area,
+        &mut state,
     );
 }
 

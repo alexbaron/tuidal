@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod audio_fx;
 mod i18n;
 mod mpris;
 mod player;
@@ -181,6 +182,21 @@ async fn run_app<B: ratatui::backend::Backend>(
 }
 
 fn handle_normal(key: KeyCode, app: &mut App) {
+    // Effects tab: navigation/adjustment keys are intercepted; everything
+    // else falls through to the global bindings below.
+    if app.active_tab == Tab::Effects {
+        match key {
+            KeyCode::Up | KeyCode::Char('k') => return app.fx_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => return app.fx_move(1),
+            KeyCode::Left => return app.fx_adjust(-1),
+            KeyCode::Right => return app.fx_adjust(1),
+            KeyCode::Enter => return app.fx_toggle(),
+            KeyCode::Char('R') => return app.fx_reset_all(),
+            KeyCode::Char('[') => return app.fx_cycle_preset(-1),
+            KeyCode::Char(']') => return app.fx_cycle_preset(1),
+            _ => {}
+        }
+    }
     match key {
         KeyCode::Char('q') => {
             app.player.stop();

@@ -87,6 +87,25 @@ pub struct Strings {
     pub visualizer_empty: &'static str,
     pub visualizer_analyzing: &'static str,
     pub visualizer_unavailable: &'static str,
+    // Effects
+    pub tab_effects: &'static str,
+    pub fx_title: &'static str,
+    pub fx_eq_title: &'static str,
+    pub fx_enabled: &'static str,
+    pub fx_preset: &'static str,
+    pub fx_balance: &'static str,
+    pub fx_bass: &'static str,
+    pub fx_treble: &'static str,
+    pub fx_stereo_width: &'static str,
+    pub fx_crossfeed: &'static str,
+    pub fx_echo: &'static str,
+    pub fx_compressor: &'static str,
+    pub fx_normalize: &'static str,
+    pub fx_center: &'static str,
+    pub fx_on: &'static str,
+    pub fx_off: &'static str,
+    pub fx_hints: &'static str,
+    pub fx_no_mpv: &'static str,
 }
 
 static FR: Strings = Strings {
@@ -156,6 +175,24 @@ static FR: Strings = Strings {
     visualizer_empty: "Aucune lecture — lancez un morceau pour voir le spectre",
     visualizer_analyzing: "⟳ Analyse du flux audio...",
     visualizer_unavailable: "Spectre indisponible pour ce morceau",
+    tab_effects: "Effets",
+    fx_title: "◈ Effets audio",
+    fx_eq_title: "Égaliseur",
+    fx_enabled: "Effets activés",
+    fx_preset: "Préréglage",
+    fx_balance: "Balance",
+    fx_bass: "Basses",
+    fx_treble: "Aigus",
+    fx_stereo_width: "Largeur stéréo",
+    fx_crossfeed: "Crossfeed casque",
+    fx_echo: "Écho",
+    fx_compressor: "Compresseur",
+    fx_normalize: "Normalisation du volume",
+    fx_center: "centre",
+    fx_on: "activé",
+    fx_off: "désactivé",
+    fx_hints: "↑/↓ choisir  ←/→ régler  Entrée basculer  [ ] préréglage  R réinitialiser",
+    fx_no_mpv: "⚠ mpv introuvable — les effets nécessitent mpv (brew install mpv)",
 };
 
 static EN: Strings = Strings {
@@ -225,6 +262,24 @@ static EN: Strings = Strings {
     visualizer_empty: "Nothing playing — play a track to see the spectrum",
     visualizer_analyzing: "⟳ Analyzing audio stream...",
     visualizer_unavailable: "Spectrum unavailable for this track",
+    tab_effects: "Effects",
+    fx_title: "◈ Audio Effects",
+    fx_eq_title: "Equalizer",
+    fx_enabled: "Effects enabled",
+    fx_preset: "Preset",
+    fx_balance: "Balance",
+    fx_bass: "Bass",
+    fx_treble: "Treble",
+    fx_stereo_width: "Stereo width",
+    fx_crossfeed: "Headphone crossfeed",
+    fx_echo: "Echo",
+    fx_compressor: "Compressor",
+    fx_normalize: "Volume normalization",
+    fx_center: "center",
+    fx_on: "enabled",
+    fx_off: "disabled",
+    fx_hints: "↑/↓ select  ←/→ adjust  Enter toggle  [ ] preset  R reset",
+    fx_no_mpv: "⚠ mpv not found — effects require mpv (brew install mpv)",
 };
 
 static DE: Strings = Strings {
@@ -294,6 +349,24 @@ static DE: Strings = Strings {
     visualizer_empty: "Keine Wiedergabe — Titel abspielen, um das Spektrum zu sehen",
     visualizer_analyzing: "⟳ Audiostream wird analysiert...",
     visualizer_unavailable: "Spektrum für diesen Titel nicht verfügbar",
+    tab_effects: "Effekte",
+    fx_title: "◈ Audioeffekte",
+    fx_eq_title: "Equalizer",
+    fx_enabled: "Effekte aktiv",
+    fx_preset: "Voreinstellung",
+    fx_balance: "Balance",
+    fx_bass: "Bässe",
+    fx_treble: "Höhen",
+    fx_stereo_width: "Stereobreite",
+    fx_crossfeed: "Kopfhörer-Crossfeed",
+    fx_echo: "Echo",
+    fx_compressor: "Kompressor",
+    fx_normalize: "Lautstärkenormalisierung",
+    fx_center: "Mitte",
+    fx_on: "an",
+    fx_off: "aus",
+    fx_hints: "↑/↓ wählen  ←/→ ändern  Enter umschalten  [ ] Voreinstellung  R zurücksetzen",
+    fx_no_mpv: "⚠ mpv nicht gefunden — Effekte benötigen mpv (brew install mpv)",
 };
 
 static RO: Strings = Strings {
@@ -363,6 +436,24 @@ static RO: Strings = Strings {
     visualizer_empty: "Nimic nu rulează — redă o piesă pentru a vedea spectrul",
     visualizer_analyzing: "⟳ Se analizează fluxul audio...",
     visualizer_unavailable: "Spectru indisponibil pentru această piesă",
+    tab_effects: "Efecte",
+    fx_title: "◈ Efecte audio",
+    fx_eq_title: "Egalizator",
+    fx_enabled: "Efecte active",
+    fx_preset: "Presetare",
+    fx_balance: "Balans",
+    fx_bass: "Bași",
+    fx_treble: "Înalte",
+    fx_stereo_width: "Lățime stereo",
+    fx_crossfeed: "Crossfeed căști",
+    fx_echo: "Ecou",
+    fx_compressor: "Compresor",
+    fx_normalize: "Normalizare volum",
+    fx_center: "centru",
+    fx_on: "activat",
+    fx_off: "dezactivat",
+    fx_hints: "↑/↓ alege  ←/→ reglează  Enter comută  [ ] presetare  R resetează",
+    fx_no_mpv: "⚠ mpv negăsit — efectele necesită mpv (brew install mpv)",
 };
 
 impl Lang {
@@ -554,6 +645,19 @@ impl Lang {
             Lang::En => "Language: English".to_string(),
             Lang::De => "Sprache: Deutsch".to_string(),
             Lang::Ro => "Limbă: Română".to_string(),
+        }
+    }
+
+    pub fn fx_status(self, n: usize) -> String {
+        match (self, n) {
+            (Lang::Fr, 0) => "Effets : neutre".to_string(),
+            (Lang::Fr, n) => format!("Effets : {n} filtre(s) actif(s)"),
+            (Lang::En, 0) => "Effects: neutral".to_string(),
+            (Lang::En, n) => format!("Effects: {n} active filter(s)"),
+            (Lang::De, 0) => "Effekte: neutral".to_string(),
+            (Lang::De, n) => format!("Effekte: {n} aktive(r) Filter"),
+            (Lang::Ro, 0) => "Efecte: neutru".to_string(),
+            (Lang::Ro, n) => format!("Efecte: {n} filtru(e) activ(e)"),
         }
     }
 }

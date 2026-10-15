@@ -25,6 +25,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - ⚡ Non-blocking UI with async background operations
 - 🔑 OAuth Device Flow authentication (no password required)
 - 📈 Real-time audio spectrum (FFT) tab
+- 🎛️ Effects tab: 10-band equalizer with presets, balance, bass/treble, stereo width, crossfeed, echo, compressor, volume normalization (requires mpv)
 
 ---
 
@@ -189,7 +190,7 @@ cargo run
 | `n` / `p` | Next / Previous track |
 | `←` / `→` | Seek backward / forward |
 | `+` / `-` | Volume up / down |
-| `Tab` | Cycle tabs (Search → Queue → Now → Spectrum → Library) |
+| `Tab` | Cycle tabs (Search → Queue → Now → Spectrum → Effects → Library) |
 | `i` | Load library (on Library tab) |
 | `j` / `k` or `↓` / `↑` | Navigate list |
 | `1` | Quality: HiRes FLAC 24bit |
@@ -198,6 +199,16 @@ cargo run
 | `L` | Login to Tidal |
 | `Alt+L` | Cycle language (FR → EN → DE → RO) |
 | `q` | Quit |
+
+#### Effects tab
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` or `j` / `k` | Select control |
+| `←` / `→` | Adjust value |
+| `Enter` | Toggle / reset to neutral |
+| `[` / `]` | Previous / next EQ preset |
+| `R` | Reset all effects |
 
 ---
 

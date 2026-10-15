@@ -6,6 +6,13 @@ use std::time::{Duration, Instant};
 // Chemin du socket IPC de mpv — unique par processus
 const SOCKET_PATH: &str = "/tmp/tuidal-mpv.sock";
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Backend {
+    None,
+    Mpv,
+    Ffplay,
+}
+
 pub struct Player {
     process: Option<Child>,
     pub state: PlayerState,
@@ -13,6 +20,12 @@ pub struct Player {
     pub volume: u8,
     pub elapsed: Duration,
     last_tick: Option<Instant>,
+    /// mpv `--af` value, reapplied on every play and pushed via IPC.
+    pub af: String,
+    /// Which player backend is currently running (if any).
+    pub backend: Backend,
+    /// Whether an mpv binary was found in PATH (checked once at startup).
+    pub mpv_available: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,7 +55,19 @@ impl Player {
             volume: 85,
             elapsed: Duration::ZERO,
             last_tick: None,
+            af: String::new(),
+            backend: Backend::None,
+            mpv_available: Self::binary_in_path("mpv"),
         }
+    }
+
+    /// Look for `name` as an executable file in PATH directories.
+    fn binary_in_path(name: &str) -> bool {
+        std::env::var_os("PATH")
+            .map(|paths| {
+                std::env::split_paths(&paths).any(|dir| dir.join(name).is_file())
+            })
+            .unwrap_or(false)
     }
 
     pub fn play(&mut self, url: &str, info: TrackInfo) {
@@ -62,6 +87,9 @@ impl Player {
         ];
         #[cfg(target_os = "linux")]
         mpv_args.push("--audio-device=alsa/default".to_string());
+        if !self.af.is_empty() {
+            mpv_args.push(format!("--af={}", self.af));
+        }
         mpv_args.push(url.to_string());
 
         let child = Command::new("mpv")
@@ -75,6 +103,7 @@ impl Player {
             Ok(c) => {
                 self.process = Some(c);
                 self.state = PlayerState::Playing;
+                self.backend = Backend::Mpv;
             }
             Err(_) => {
                 // fallback : ffplay (pas d'IPC mais au moins il joue)
@@ -87,6 +116,7 @@ impl Player {
                 if let Ok(c) = child2 {
                     self.process = Some(c);
                     self.state = PlayerState::Playing;
+                    self.backend = Backend::Ffplay;
                 }
             }
         }
@@ -102,8 +132,18 @@ impl Player {
         }
         let _ = std::fs::remove_file(SOCKET_PATH);
         self.state = PlayerState::Stopped;
+        self.backend = Backend::None;
         self.elapsed = Duration::ZERO;
         self.last_tick = None;
+    }
+
+    /// Store the mpv af filter chain and push it live when mpv is running.
+    /// `af` empty clears all audio filters.
+    pub fn set_audio_filters(&mut self, af: &str) {
+        self.af = af.to_string();
+        if self.backend == Backend::Mpv {
+            self.ipc_cmd(&crate::audio_fx::af_ipc_command(af));
+        }
     }
 
     pub fn toggle_pause(&mut self) {
@@ -198,6 +238,7 @@ impl Player {
             if let Ok(Some(_)) = child.try_wait() {
                 self.process = None;
                 self.state = PlayerState::Stopped;
+                self.backend = Backend::None;
                 self.last_tick = None;
                 let _ = std::fs::remove_file(SOCKET_PATH);
             }
