@@ -1,7 +1,10 @@
 
 Fork of the original Tuidal for personal purpose.
 - french interface
-- add some cool features (to define)
+- add some cool features
+- [x] new tab spectre
+<img width="1031" height="513" alt="image" src="https://github.com/user-attachments/assets/0a64bbff-e7cf-4f93-8ab9-7d1601e9f386" />
+- [x] preset / balance / ... based on mpv
 
 # Tuidal
 
