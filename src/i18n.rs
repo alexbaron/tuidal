@@ -81,6 +81,12 @@ pub struct Strings {
     pub status_session_active: &'static str,
     pub status_press_l: &'static str,
     pub status_added_to_queue: &'static str,
+    // Visualizer
+    pub tab_visualizer: &'static str,
+    pub visualizer_title: &'static str,
+    pub visualizer_empty: &'static str,
+    pub visualizer_analyzing: &'static str,
+    pub visualizer_unavailable: &'static str,
 }
 
 static FR: Strings = Strings {
@@ -145,6 +151,11 @@ static FR: Strings = Strings {
     status_session_active: "✓ Session active",
     status_press_l: "Appuyez sur 'L' pour vous connecter à Tidal",
     status_added_to_queue: "▶ Ajouté à la file",
+    tab_visualizer: "Spectre",
+    visualizer_title: "◈ Spectre audio",
+    visualizer_empty: "Aucune lecture — lancez un morceau pour voir le spectre",
+    visualizer_analyzing: "⟳ Analyse du flux audio...",
+    visualizer_unavailable: "Spectre indisponible pour ce morceau",
 };
 
 static EN: Strings = Strings {
@@ -209,6 +220,11 @@ static EN: Strings = Strings {
     status_session_active: "✓ Session active",
     status_press_l: "Press 'L' to log in to Tidal",
     status_added_to_queue: "▶ Added to queue",
+    tab_visualizer: "Spectrum",
+    visualizer_title: "◈ Audio Spectrum",
+    visualizer_empty: "Nothing playing — play a track to see the spectrum",
+    visualizer_analyzing: "⟳ Analyzing audio stream...",
+    visualizer_unavailable: "Spectrum unavailable for this track",
 };
 
 static DE: Strings = Strings {
@@ -273,6 +289,11 @@ static DE: Strings = Strings {
     status_session_active: "✓ Sitzung aktiv",
     status_press_l: "'L' drücken um sich bei Tidal anzumelden",
     status_added_to_queue: "▶ Zur Warteschlange hinzugefügt",
+    tab_visualizer: "Spektrum",
+    visualizer_title: "◈ Audiospektrum",
+    visualizer_empty: "Keine Wiedergabe — Titel abspielen, um das Spektrum zu sehen",
+    visualizer_analyzing: "⟳ Audiostream wird analysiert...",
+    visualizer_unavailable: "Spektrum für diesen Titel nicht verfügbar",
 };
 
 static RO: Strings = Strings {
@@ -337,6 +358,11 @@ static RO: Strings = Strings {
     status_session_active: "✓ Sesiune activă",
     status_press_l: "Apasă 'L' pentru a te autentifica în Tidal",
     status_added_to_queue: "▶ Adăugat în coadă",
+    tab_visualizer: "Spectru",
+    visualizer_title: "◈ Spectru audio",
+    visualizer_empty: "Nimic nu rulează — redă o piesă pentru a vedea spectrul",
+    visualizer_analyzing: "⟳ Se analizează fluxul audio...",
+    visualizer_unavailable: "Spectru indisponibil pentru această piesă",
 };
 
 impl Lang {

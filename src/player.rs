@@ -204,8 +204,22 @@ impl Player {
         }
 
         if self.state == PlayerState::Playing {
-            if let Some(pos) = self.query_time_pos() {
-                self.elapsed = Duration::from_secs_f64(pos);
+            match self.query_time_pos() {
+                Some(pos) => {
+                    self.elapsed = Duration::from_secs_f64(pos);
+                }
+                None => {
+                    // No IPC socket (e.g. ffplay fallback): advance elapsed
+                    // from the wall clock so progress and spectrum keep moving.
+                    let now = Instant::now();
+                    if let Some(last) = self.last_tick {
+                        self.elapsed += now.duration_since(last);
+                        if let Some(info) = &self.current {
+                            self.elapsed =
+                                self.elapsed.min(Duration::from_secs(info.duration));
+                        }
+                    }
+                }
             }
             self.last_tick = Some(Instant::now());
         }

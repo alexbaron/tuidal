@@ -1,4 +1,5 @@
 use crate::i18n::Lang;
+use crate::spectrum::{AnalysisBuffer, SpectrumAnalyzer};
 use crate::player::{Player, TrackInfo};
 use crate::tidal::{
     Album, Artist, CoverInfo, FavAlbum, Lyrics, Mix, Playlist, Quality, StreamInfo,
@@ -10,6 +11,7 @@ use ratatui_image::protocol::StatefulProtocol;
 use serde::Deserialize as DeserializeAttr;
 use serde::Serialize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +25,7 @@ pub enum Tab {
     Search,
     Queue,
     Now,
+    Visualizer,
     Library,
 }
 
@@ -176,6 +179,13 @@ pub struct App {
     pub repeat: RepeatMode,
 
     pub lyrics: Option<Lyrics>,
+
+    /// Parallel stream analysis for the spectrum tab (downloads the same URL).
+    pub analysis: Option<Arc<std::sync::Mutex<AnalysisBuffer>>>,
+    analysis_cancel: Option<Arc<AtomicBool>>,
+    pub spectrum: SpectrumAnalyzer,
+    /// Band count requested by the UI (depends on widget width).
+    pub spectrum_bands_hint: usize,
 }
 
 impl App {
@@ -217,6 +227,10 @@ impl App {
             shuffle: false,
             repeat: RepeatMode::All,
             lyrics: None,
+            analysis: None,
+            analysis_cancel: None,
+            spectrum: SpectrumAnalyzer::new(),
+            spectrum_bands_hint: 96,
         }
     }
 
@@ -276,6 +290,7 @@ impl App {
                     info.codec.to_uppercase()
                 );
                 self.player.play(&info.url, ti);
+                self.start_analysis(&info.url);
                 self.loading = false;
                 self.auto_advance = true;
                 self.load_cover_bg(track.id);
@@ -431,6 +446,7 @@ impl App {
                 }
                 ApiCommand::Stop => {
                     self.player.stop();
+                    self.stop_analysis();
                 }
                 ApiCommand::Seek(secs) => {
                     self.player.seek_relative(secs);
@@ -498,7 +514,7 @@ impl App {
         let track = match self.active_tab {
             Tab::Search => self.search_results.get(self.selected).cloned(),
             Tab::Queue => self.queue.get(self.selected).cloned(),
-            Tab::Now | Tab::Library => return,
+            Tab::Now | Tab::Visualizer | Tab::Library => return,
         };
         let Some(track) = track else { return };
         if self.queue.iter().any(|t| t.id == track.id) {
@@ -517,8 +533,7 @@ impl App {
         let track = match self.active_tab {
             Tab::Search => self.search_results.get(self.selected).cloned(),
             Tab::Queue => self.queue.get(self.selected).cloned(),
-            Tab::Now => return,
-            Tab::Library => return,
+            Tab::Now | Tab::Visualizer | Tab::Library => return,
         };
         let Some(track) = track else { return };
         let queue_index = if self.active_tab == Tab::Search {
@@ -598,6 +613,7 @@ impl App {
         self.cover_proto = None;
         self.lyrics = None;
         self.player.stop();
+        self.stop_analysis();
         let tx = self.tx();
         let tidal = self.tidal.clone();
         let quality = self.quality.as_api_str().to_string();
@@ -803,7 +819,8 @@ impl App {
         self.active_tab = match self.active_tab {
             Tab::Search => Tab::Queue,
             Tab::Queue => Tab::Now,
-            Tab::Now => Tab::Library,
+            Tab::Now => Tab::Visualizer,
+            Tab::Visualizer => Tab::Library,
             Tab::Library => {
                 self.collection_view = CollectionView::Tracks;
                 Tab::Search
@@ -816,7 +833,7 @@ impl App {
         match self.active_tab {
             Tab::Search => self.search_results.len(),
             Tab::Queue => self.queue.len(),
-            Tab::Now => 0,
+            Tab::Now | Tab::Visualizer => 0,
             Tab::Library => self.playlists.len() + self.mixes.len(),
         }
     }
@@ -948,6 +965,34 @@ impl App {
                 }
             }
         });
+    }
+
+    /// Start downloading + decoding `url` for spectrum analysis, replacing
+    /// any analysis already in flight.
+    fn start_analysis(&mut self, url: &str) {
+        self.stop_analysis();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.analysis = Some(crate::spectrum::start_analysis(url.to_string(), cancel.clone()));
+        self.analysis_cancel = Some(cancel);
+    }
+
+    fn stop_analysis(&mut self) {
+        if let Some(c) = self.analysis_cancel.take() {
+            c.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.analysis = None;
+        self.spectrum.reset();
+    }
+
+    pub fn update_spectrum(&mut self, n_bands: usize) {
+        if self.active_tab != Tab::Visualizer
+            || self.player.state != crate::player::PlayerState::Playing
+        {
+            return;
+        }
+        let Some(analysis) = &self.analysis else { return };
+        let Ok(buf) = analysis.lock() else { return };
+        self.spectrum.update(&buf, self.player.elapsed, n_bands);
     }
 
     fn save_settings(&self) {

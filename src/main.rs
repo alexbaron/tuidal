@@ -3,6 +3,7 @@ mod app;
 mod i18n;
 mod mpris;
 mod player;
+mod spectrum;
 mod tidal;
 mod ui;
 
@@ -36,7 +37,16 @@ impl Drop for TerminalRestorer {
 #[tokio::main]
 async fn main() -> Result<()> {
     let _restorer = TerminalRestorer;
-    let picker = ratatui_image::picker::Picker::from_query_stdio().ok();
+    let mut picker = ratatui_image::picker::Picker::from_query_stdio().ok();
+    // ratatui-image trusts an inherited TERM_PROGRAM (e.g. "vscode" when kitty
+    // is launched from VS Code) over the terminal's own capability reply and
+    // would pick the iTerm2 protocol, which kitty rejects. Force kitty when
+    // we are demonstrably running inside it.
+    let in_kitty = std::env::var("KITTY_WINDOW_ID").is_ok()
+        || std::env::var("TERM").is_ok_and(|t| t.contains("kitty"));
+    if let (Some(p), true) = (picker.as_mut(), in_kitty) {
+        p.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
+    }
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -124,6 +134,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 
             _ = ui_tick.tick() => {
                 app.player.tick();
+                app.update_spectrum(app.spectrum_bands_hint);
                 if let Ok(mut s) = api_status.write() {
                     *s = app.api_status_snapshot();
                 }

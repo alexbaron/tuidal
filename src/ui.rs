@@ -6,7 +6,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Wrap},
+    symbols::Marker,
+    widgets::{
+        Axis, Block, BorderType, Borders, Cell, Chart, Clear, Dataset, GraphType, Padding,
+        Paragraph, Row, Table, Wrap,
+    },
 };
 //use ratatui_image::{picker::Picker, StatefulImage, Resize};
 use ratatui_image::{Resize, StatefulImage};
@@ -86,6 +90,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("  ", Style::default()),
             tab_span(s.tab_now, Tab::Now, &app.active_tab),
             Span::styled("  ", Style::default()),
+            tab_span(s.tab_visualizer, Tab::Visualizer, &app.active_tab),
+            Span::styled("  ", Style::default()),
             tab_span(s.tab_library, Tab::Library, &app.active_tab),
         ]))
         .block(
@@ -144,6 +150,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         Tab::Search => draw_search_tab(f, app, area),
         Tab::Queue => draw_queue_tab(f, app, area),
         Tab::Now => draw_now_tab(f, app, area),
+        Tab::Visualizer => draw_visualizer_tab(f, app, area),
         Tab::Library => draw_library_tab(f, app, area),
     }
 }
@@ -1046,6 +1053,104 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
         area,
         &mut state,
     );
+}
+
+/// Format a frequency as "30 Hz" / "1.0 kHz".
+fn fmt_hz(hz: f32) -> String {
+    if hz >= 1000.0 {
+        format!("{:.1} kHz", hz / 1000.0)
+    } else {
+        format!("{hz:.0} Hz")
+    }
+}
+
+fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
+    let s = app.lang.strings();
+    let title = if let Some(info) = &app.player.current {
+        format!(
+            " {} — {} – {} ",
+            s.visualizer_title, info.artist, info.title
+        )
+    } else {
+        format!(" {} ", s.visualizer_title)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM))
+        .title(Span::styled(title, Style::default().fg(ACCENT)))
+        .style(Style::default().bg(BG2));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width < 24 || inner.height < 6 {
+        return;
+    }
+
+    // The band count follows the chart width; the main loop reads this hint.
+    let n_bands = (inner.width.saturating_sub(8) as usize).clamp(16, 256);
+    app.spectrum_bands_hint = n_bands;
+
+    let centered_msg = |msg: &str| {
+        Paragraph::new(format!("\n\n  {msg}"))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(MUTED))
+    };
+
+    if app.player.current.is_none() {
+        f.render_widget(centered_msg(s.visualizer_empty), inner);
+        return;
+    }
+    let failed = app
+        .analysis
+        .as_ref()
+        .and_then(|a| a.lock().ok().map(|b| matches!(b.state, crate::spectrum::AnalysisState::Failed(_))))
+        .unwrap_or(false);
+    if failed {
+        f.render_widget(centered_msg(s.visualizer_unavailable), inner);
+        return;
+    }
+    if app.spectrum.bands.is_empty() {
+        f.render_widget(centered_msg(s.visualizer_analyzing), inner);
+        return;
+    }
+
+    let n = app.spectrum.bands.len();
+    let data: Vec<(f64, f64)> = app
+        .spectrum
+        .bands
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (i as f64, *v as f64))
+        .collect();
+
+    // 5 frequency labels evenly spaced along the x axis.
+    let mut x_labels = Vec::new();
+    for i in 0..5 {
+        let idx = i * (n - 1) / 4;
+        let hz = app.spectrum.band_freqs.get(idx).copied().unwrap_or(0.0);
+        x_labels.push(Span::styled(fmt_hz(hz), Style::default().fg(MUTED)));
+    }
+    let dataset = Dataset::default()
+        .graph_type(GraphType::Line)
+        .marker(Marker::Braille)
+        .style(Style::default().fg(ACCENT))
+        .data(&data);
+    let chart = Chart::new(vec![dataset])
+        .x_axis(
+            Axis::default()
+                .bounds([0.0, (n - 1).max(1) as f64])
+                .labels(x_labels),
+        )
+        .y_axis(
+            Axis::default()
+                .bounds([0.0, 1.0])
+                .labels(vec![
+                    Span::styled("-60 dB", Style::default().fg(MUTED)),
+                    Span::styled("-30 dB", Style::default().fg(MUTED)),
+                    Span::styled("  0 dB", Style::default().fg(MUTED)),
+                ]),
+        );
+    f.render_widget(chart, inner);
 }
 
 fn truncate(s: &str, max: usize) -> String {

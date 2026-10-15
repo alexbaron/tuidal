@@ -21,6 +21,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - 📚 Library — playlists, mixes, favorites
 - ⚡ Non-blocking UI with async background operations
 - 🔑 OAuth Device Flow authentication (no password required)
+- 📈 Real-time audio spectrum (FFT) tab
 
 ---
 
@@ -185,7 +186,7 @@ cargo run
 | `n` / `p` | Next / Previous track |
 | `←` / `→` | Seek backward / forward |
 | `+` / `-` | Volume up / down |
-| `Tab` | Cycle tabs (Search → Queue → Now → Library) |
+| `Tab` | Cycle tabs (Search → Queue → Now → Spectrum → Library) |
 | `i` | Load library (on Library tab) |
 | `j` / `k` or `↓` / `↑` | Navigate list |
 | `1` | Quality: HiRes FLAC 24bit |
@@ -246,7 +247,8 @@ image         = "0.25"
 
 ## Notes
 
-- Audio quality depends on your Tidal subscription. If HiRes is unavailable for a track, tuidal automatically falls back to Lossless, then High.
+- Audio quality depends on your Tidal subscription.
+- The spectrum tab downloads the stream a second time for analysis. If HiRes is unavailable for a track, tuidal automatically falls back to Lossless, then High.
 - Album art requires the Kitty terminal. In other terminals, a placeholder is shown.
 - This project uses tidalapi, an unofficial Tidal API client. Use it only for personal use and in accordance with Tidal's terms of service.
 

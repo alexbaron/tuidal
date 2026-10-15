@@ -19,3 +19,5 @@ reqwest = { version = "0.12", features = ["json"] }
 open = "5"
 axum  = "0.8"
 zbus  = "5"
+symphonia = { version = "0.5", features = ["isomp4", "aac"] }
+rustfft   = "6"
