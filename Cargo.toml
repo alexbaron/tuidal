@@ -21,3 +21,4 @@ axum  = "0.8"
 zbus  = "5"
 symphonia = { version = "0.5", features = ["isomp4", "aac"] }
 rustfft   = "6"
+base64    = "0.22"

@@ -214,7 +214,14 @@ def handle_stream(session, track_id, quality=None):
 
 def handle_cover(session, track_id):
     track = session.track(track_id)
-    url = track.album.image(320)
+    # Prefer the highest resolution; not every album offers every size.
+    url = None
+    for size in (1280, 640, 320):
+        try:
+            url = track.album.image(size)
+            break
+        except Exception:
+            continue
     return {"url": url, "title": track.name, "artist": track.artist.name, "album": track.album.name}
 
 

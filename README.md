@@ -25,6 +25,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - ⚡ Non-blocking UI with async background operations
 - 🔑 OAuth Device Flow authentication (no password required)
 - 📈 Real-time audio spectrum (FFT) tab
+- 🖼️ Optional background image behind the spectrum (album cover or random wallhaven.cc wallpaper, kitty only)
 - 🎛️ Effects tab: 10-band equalizer with presets, balance, bass/treble, stereo width, crossfeed, echo, compressor, volume normalization (requires mpv)
 
 ---
@@ -112,6 +113,12 @@ Or use a virtual environment (recommended on NixOS):
 python3 -m venv ~/my_python
 ~/my_python/bin/pip install tidalapi
 ```
+
+### Settings (`~/.config/tuidal/settings.json`)
+
+Persisted keys include `lang`, `quality`, `volume`, `audio_fx`, `spectrum_bg`
+(`"none"` | `"cover"` | `"wallhaven"`, default `"cover"`) and `wallhaven_query`
+(default `"abstract"`).
 
 ### Python Executable Path (`TUIDAL_PYTHON_PATH`)
 
@@ -210,6 +217,13 @@ cargo run
 | `[` / `]` | Previous / next EQ preset |
 | `R` | Reset all effects |
 
+#### Spectrum tab
+
+| Key | Action |
+|-----|--------|
+| `b` | Cycle background (none → cover → wallhaven) |
+| `B` | Fetch a new random wallpaper (wallhaven source) |
+
 ---
 
 ## Project Structure
@@ -262,7 +276,8 @@ image         = "0.25"
 ## Notes
 
 - Audio quality depends on your Tidal subscription.
-- The spectrum tab downloads the stream a second time for analysis. If HiRes is unavailable for a track, tuidal automatically falls back to Lossless, then High.
+- The spectrum tab downloads the stream a second time for analysis.
+- Wallhaven images are fetched at runtime from wallhaven.cc (SFW, random, query configurable via `wallhaven_query` in `settings.json`). If HiRes is unavailable for a track, tuidal automatically falls back to Lossless, then High.
 - Album art requires the Kitty terminal. In other terminals, a placeholder is shown.
 - This project uses tidalapi, an unofficial Tidal API client. Use it only for personal use and in accordance with Tidal's terms of service.
 

@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod audio_fx;
 mod i18n;
+mod kitty_bg;
 mod mpris;
 mod player;
 mod spectrum;
@@ -38,7 +39,13 @@ impl Drop for TerminalRestorer {
 #[tokio::main]
 async fn main() -> Result<()> {
     let _restorer = TerminalRestorer;
-    let mut picker = ratatui_image::picker::Picker::from_query_stdio().ok();
+    let mut picker = match ratatui_image::picker::Picker::from_query_stdio() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            kitty_bg::bg_log(&format!("picker query failed: {e:?}"));
+            None
+        }
+    };
     // ratatui-image trusts an inherited TERM_PROGRAM (e.g. "vscode" when kitty
     // is launched from VS Code) over the terminal's own capability reply and
     // would pick the iTerm2 protocol, which kitty rejects. Force kitty when
@@ -48,6 +55,11 @@ async fn main() -> Result<()> {
     if let (Some(p), true) = (picker.as_mut(), in_kitty) {
         p.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
     }
+    kitty_bg::bg_log(&format!(
+        "picker: in_kitty={in_kitty} protocol={:?} font_size={:?}",
+        picker.as_ref().map(|p| p.protocol_type()),
+        picker.as_ref().map(|p| p.font_size())
+    ));
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -100,6 +112,16 @@ async fn main() -> Result<()> {
 
     let result = run_app(&mut terminal, &mut app, event_rx, api_status).await;
 
+    // Delete the spectrum background image before the terminal is restored.
+    if matches!(
+        app.picker.as_ref().map(|p| p.protocol_type()),
+        Some(ratatui_image::picker::ProtocolType::Kitty)
+    ) {
+        use std::io::Write as _;
+        let _ = write!(io::stdout(), "{}", kitty_bg::delete_sequence());
+        let _ = io::stdout().flush();
+    }
+
     // Graceful shutdown
     tidal.shutdown().await;
     api_handle.abort();
@@ -127,6 +149,12 @@ async fn run_app<B: ratatui::backend::Backend>(
         }
 
         terminal.draw(|f| ui::draw(f, app))?;
+        if let Some(seq) = app.bg_tick() {
+            use std::io::Write as _;
+            let mut out = io::stdout();
+            out.write_all(seq.as_bytes())?;
+            out.flush()?;
+        }
 
         tokio::select! {
             Some(event) = rx.recv() => {
@@ -184,6 +212,18 @@ async fn run_app<B: ratatui::backend::Backend>(
 fn handle_normal(key: KeyCode, app: &mut App) {
     // Effects tab: navigation/adjustment keys are intercepted; everything
     // else falls through to the global bindings below.
+    if app.active_tab == Tab::Visualizer {
+        match key {
+            KeyCode::Char('b') => return app.bg_cycle_source(),
+            KeyCode::Char('B') => {
+                if app.spectrum_bg == kitty_bg::SpectrumBg::Wallhaven {
+                    app.fetch_wallhaven_bg();
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
     if app.active_tab == Tab::Effects {
         match key {
             KeyCode::Up | KeyCode::Char('k') => return app.fx_move(-1),

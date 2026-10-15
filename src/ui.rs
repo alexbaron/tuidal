@@ -148,6 +148,8 @@ fn tab_span<'a>(label: &'a str, tab: Tab, active: &Tab) -> Span<'a> {
 }
 
 fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
+    // Only the Visualizer tab fills this in; reset it for other tabs.
+    app.spectrum_area = None;
     match app.active_tab {
         Tab::Search => draw_search_tab(f, app, area),
         Tab::Queue => draw_queue_tab(f, app, area),
@@ -713,6 +715,16 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
     );
 
     let s = app.lang.strings();
+    if app.active_tab == Tab::Visualizer {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("  {}", s.visualizer_hints),
+                Style::default().fg(DIM),
+            ))),
+            inner[2],
+        );
+        return;
+    }
     if app.active_tab == Tab::Effects {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -1294,20 +1306,27 @@ fn fmt_hz(hz: f32) -> String {
 
 fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
     let s = app.lang.strings();
+    let bg_tag = format!(
+        "[b: {}]",
+        app.lang.bg_label(app.spectrum_bg)
+    );
     let title = if let Some(info) = &app.player.current {
         format!(
-            " {} — {} – {} ",
-            s.visualizer_title, info.artist, info.title
+            " {} — {} – {}  {} ",
+            s.visualizer_title, info.artist, info.title, bg_tag
         )
     } else {
-        format!(" {} ", s.visualizer_title)
+        format!(" {}  {} ", s.visualizer_title, bg_tag)
     };
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(DIM))
-        .title(Span::styled(title, Style::default().fg(ACCENT)))
-        .style(Style::default().bg(BG2));
+        .title(Span::styled(title, Style::default().fg(ACCENT)));
+    // Keep the chart area transparent when a kitty background is shown.
+    if app.spectrum_bg == crate::kitty_bg::SpectrumBg::None {
+        block = block.style(Style::default().bg(BG2));
+    }
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.width < 24 || inner.height < 6 {
@@ -1341,6 +1360,9 @@ fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(centered_msg(s.visualizer_analyzing), inner);
         return;
     }
+
+    // Chart is about to render: expose its area to the background placer.
+    app.spectrum_area = Some(inner);
 
     let n = app.spectrum.bands.len();
     let data: Vec<(f64, f64)> = app

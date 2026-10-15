@@ -1,5 +1,6 @@
 use crate::audio_fx::{AudioFx, FxControl, PRESETS};
 use crate::i18n::Lang;
+use crate::kitty_bg::{self, BgLayout, SpectrumBg};
 use crate::spectrum::{AnalysisBuffer, SpectrumAnalyzer};
 use crate::player::{Player, TrackInfo};
 use crate::tidal::{
@@ -72,6 +73,31 @@ pub enum AppEvent {
     ApiCmd(ApiCommand),
     LyricsReady(Lyrics),
     LyricsError,
+    WallhavenReady(DynamicImage),
+    WallhavenError(String),
+    BackgroundEncoded { key: BgKey, sequence: String },
+}
+
+/// Identifies which image/geometry the background currently targets.
+#[derive(Clone, PartialEq)]
+pub struct BgKey {
+    source: SpectrumBg,
+    image_tag: u64,
+    px_w: u32,
+    px_h: u32,
+}
+
+/// Private bookkeeping for the kitty background image lifecycle.
+#[derive(Default)]
+struct BgState {
+    transmitted_key: Option<BgKey>,
+    pending_key: Option<BgKey>,
+    placed_area: Option<ratatui::layout::Rect>,
+    sequence_to_write: String,
+    frame_counter: u8,
+    logged_no_kitty: bool,
+    /// Key whose encode failed (panic or encode error): never retried.
+    failed_key: Option<BgKey>,
 }
 
 pub enum ApiCommand {
@@ -192,6 +218,17 @@ pub struct App {
     pub audio_fx: AudioFx,
     /// Selected row in the Effects tab (index into FxControl::ALL).
     pub fx_cursor: usize,
+    /// Background image source for the spectrum tab.
+    pub spectrum_bg: SpectrumBg,
+    /// wallhaven.cc search query (persisted in settings).
+    pub wallhaven_query: String,
+    /// Last wallpaper downloaded from wallhaven.
+    pub wallhaven_image: Option<DynamicImage>,
+    /// Chart area written by the UI each frame (None when not on the tab).
+    pub spectrum_area: Option<ratatui::layout::Rect>,
+    /// Monotonic tag bumped each time a wallhaven image arrives.
+    wallhaven_seq: u64,
+    bg_state: BgState,
 }
 
 impl App {
@@ -239,6 +276,12 @@ impl App {
             spectrum_bands_hint: 96,
             audio_fx: AudioFx::default(),
             fx_cursor: 0,
+            spectrum_bg: SpectrumBg::Cover,
+            wallhaven_query: "abstract".to_string(),
+            wallhaven_image: None,
+            spectrum_area: None,
+            wallhaven_seq: 0,
+            bg_state: BgState::default(),
         }
     }
 
@@ -299,6 +342,10 @@ impl App {
                 );
                 self.player.play(&info.url, ti);
                 self.start_analysis(&info.url);
+                // Fresh random wallpaper per track when that source is active.
+                if self.spectrum_bg == SpectrumBg::Wallhaven {
+                    self.fetch_wallhaven_bg();
+                }
                 self.loading = false;
                 self.auto_advance = true;
                 self.load_cover_bg(track.id);
@@ -370,6 +417,28 @@ impl App {
             }
             AppEvent::LyricsError => {
                 self.lyrics = None;
+            }
+            AppEvent::WallhavenReady(img) => {
+                self.wallhaven_seq += 1;
+                self.wallhaven_image = Some(img);
+            }
+            AppEvent::WallhavenError(e) => {
+                self.status_msg = self.lang.bg_error(&e);
+            }
+            AppEvent::BackgroundEncoded { key, sequence } => {
+                if self.bg_state.pending_key.as_ref() == Some(&key) {
+                    self.bg_state.pending_key = None;
+                    if sequence.is_empty() {
+                        kitty_bg::bg_log("encode failed");
+                        self.bg_state.failed_key = Some(key);
+                    } else {
+                        kitty_bg::bg_log(&format!("encoded: len={}", sequence.len()));
+                        self.bg_state.sequence_to_write =
+                            kitty_bg::delete_sequence() + &sequence;
+                        self.bg_state.transmitted_key = Some(key);
+                        self.bg_state.placed_area = None;
+                    }
+                }
             }
             AppEvent::LibraryLoaded { playlists, mixes } => {
                 self.playlists = playlists;
@@ -1115,12 +1184,210 @@ impl App {
         self.save_settings();
     }
 
+    // ── Spectrum background (kitty graphics protocol) ─────────────────────
+
+    fn kitty_protocol(&self) -> bool {
+        matches!(
+            self.picker.as_ref().map(|p| p.protocol_type()),
+            Some(ratatui_image::picker::ProtocolType::Kitty)
+        )
+    }
+
+    /// Cycle the background source (key `b` on the spectrum tab).
+    pub fn bg_cycle_source(&mut self) {
+        if !self.kitty_protocol() {
+            self.status_msg = self.lang.strings().bg_requires_kitty.to_string();
+            return;
+        }
+        self.spectrum_bg = self.spectrum_bg.cycle();
+        self.status_msg = self
+            .lang
+            .bg_source_changed(self.lang.bg_label(self.spectrum_bg));
+        if self.spectrum_bg == SpectrumBg::Wallhaven && self.wallhaven_image.is_none() {
+            self.fetch_wallhaven_bg();
+        }
+        self.save_settings();
+    }
+
+    /// Download a random wallpaper from wallhaven.cc in the background.
+    pub fn fetch_wallhaven_bg(&mut self) {
+        self.status_msg = self.lang.strings().bg_fetching.to_string();
+        let tx = self.tx();
+        let query = self.wallhaven_query.clone();
+        tokio::spawn(async move {
+            let result: anyhow::Result<DynamicImage> = async {
+                let client = reqwest::Client::new();
+                let api = reqwest::Url::parse_with_params(
+                    "https://wallhaven.cc/api/v1/search",
+                    &[
+                        ("q", query.as_str()),
+                        ("categories", "100"),
+                        ("purity", "100"),
+                        ("sorting", "random"),
+                        ("atleast", "1280x720"),
+                    ],
+                )?;
+                let json: serde_json::Value = client
+                    .get(api)
+                    .header("User-Agent", "tuidal")
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+                let path = json["data"]
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|d| d["path"].as_str())
+                    .ok_or_else(|| anyhow::anyhow!("wallhaven: empty result"))?
+                    .to_string();
+                let bytes = client
+                    .get(&path)
+                    .header("User-Agent", "tuidal")
+                    .send()
+                    .await?
+                    .bytes()
+                    .await?;
+                Ok(image::load_from_memory(&bytes)?)
+            }
+            .await;
+            let _ = match result {
+                Ok(img) => tx.send(AppEvent::WallhavenReady(img)),
+                Err(e) => tx.send(AppEvent::WallhavenError(e.to_string())),
+            };
+        });
+    }
+
+    /// Called right after each `terminal.draw`: returns the escape sequence
+    /// to write on stdout, or None when nothing must be emitted.
+    pub fn bg_tick(&mut self) -> Option<String> {
+        if !self.kitty_protocol() {
+            if !self.bg_state.logged_no_kitty {
+                self.bg_state.logged_no_kitty = true;
+                kitty_bg::bg_log("kitty protocol not detected — background disabled");
+            }
+            return None;
+        }
+        let source_img = match self.spectrum_bg {
+            SpectrumBg::Cover => self.cover_image.as_ref(),
+            SpectrumBg::Wallhaven => self.wallhaven_image.as_ref(),
+            SpectrumBg::None => None,
+        };
+        let active = self.active_tab == Tab::Visualizer
+            && self.spectrum_area.is_some()
+            && self.spectrum_bg != SpectrumBg::None;
+        if !active {
+            if self.bg_state.placed_area.is_some() || self.bg_state.transmitted_key.is_some() {
+                kitty_bg::bg_log(&format!(
+                    "inactive: delete tab={:?} area={:?} bg={:?}",
+                    self.active_tab, self.spectrum_area, self.spectrum_bg
+                ));
+                self.bg_state = BgState::default();
+                return Some(kitty_bg::delete_sequence());
+            }
+            return None;
+        }
+        // Fall back to the built-in gradient so the pipeline is exercised
+        // (and something displays) even before any real image arrives.
+        let area = self.spectrum_area.unwrap();
+        let mut img = source_img.unwrap_or_else(|| kitty_bg::default_background());
+        let (fw, fh) = self
+            .picker
+            .as_ref()
+            .map(|p| p.font_size())
+            .unwrap_or((10, 20));
+        let px_w = area.width as u32 * fw as u32;
+        let px_h = area.height as u32 * fh as u32;
+        // u64::MAX tags the built-in fallback; the real image replaces it
+        // with a different key as soon as it arrives.
+        let tag = if source_img.is_none() {
+            u64::MAX
+        } else {
+            match self.spectrum_bg {
+                SpectrumBg::Cover => self.current_track_id.unwrap_or(0),
+                SpectrumBg::Wallhaven => self.wallhaven_seq,
+                SpectrumBg::None => 0,
+            }
+        };
+        let mut key = BgKey {
+            source: self.spectrum_bg,
+            image_tag: tag,
+            px_w,
+            px_h,
+        };
+        // A key that already failed to encode falls back to the built-in
+        // gradient so a background still shows instead of an error loop.
+        if self.bg_state.failed_key.as_ref() == Some(&key) {
+            img = kitty_bg::default_background();
+            key.image_tag = u64::MAX;
+        }
+
+        // Encode off-thread when the key changed (new image or new size).
+        if self.bg_state.transmitted_key.as_ref() != Some(&key)
+            && self.bg_state.pending_key.as_ref() != Some(&key)
+        {
+            kitty_bg::bg_log(&format!(
+                "encode: key tag={} {}x{} area={:?} source_img={}",
+                key.image_tag, px_w, px_h, area, source_img.is_some()
+            ));
+            self.bg_state.pending_key = Some(key.clone());
+            let key_task = key.clone();
+            let img = img.clone();
+            // Album covers read much better as a sharp center over a blurred
+            // backdrop; photos fill the area with a plain cover-crop.
+            let layout = match self.spectrum_bg {
+                SpectrumBg::Cover => BgLayout::FitHeight,
+                _ => BgLayout::Cover,
+            };
+            let tx = self.tx();
+            tokio::task::spawn_blocking(move || {
+                let sequence = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    kitty_bg::transmit_sequence(&img, px_w, px_h, layout)
+                }))
+                .map(|r| r.unwrap_or_default())
+                .unwrap_or_default();
+                let _ = tx.send(AppEvent::BackgroundEncoded {
+                    key: key_task,
+                    sequence,
+                });
+            });
+        }
+
+        // Freshly encoded image: transmit (after deleting the previous one)
+        // then place it in the chart area.
+        if !self.bg_state.sequence_to_write.is_empty() {
+            kitty_bg::bg_log(&format!(
+                "transmit+place len={} area={area:?}",
+                self.bg_state.sequence_to_write.len()
+            ));
+            let mut out = std::mem::take(&mut self.bg_state.sequence_to_write);
+            out.push_str(&kitty_bg::place_sequence(area));
+            self.bg_state.placed_area = Some(area);
+            self.bg_state.frame_counter = 0;
+            return Some(out);
+        }
+
+        // Re-place every frame when the area moved, and every ~10 frames
+        // anyway (ratatui clears the screen on resize).
+        if self.bg_state.transmitted_key.as_ref() == Some(&key) {
+            self.bg_state.frame_counter = self.bg_state.frame_counter.wrapping_add(1);
+            if self.bg_state.placed_area != Some(area) || self.bg_state.frame_counter >= 10 {
+                kitty_bg::bg_log(&format!("place: area={area:?}"));
+                self.bg_state.placed_area = Some(area);
+                self.bg_state.frame_counter = 0;
+                return Some(kitty_bg::place_sequence(area));
+            }
+        }
+        None
+    }
+
     fn save_settings(&self) {
         let settings = Settings {
             lang: self.lang,
             quality: self.quality,
             volume: self.player.volume,
             audio_fx: self.audio_fx.clone(),
+            spectrum_bg: self.spectrum_bg,
+            wallhaven_query: self.wallhaven_query.clone(),
         };
         let path = settings_path();
         if let Some(parent) = path.parent() {
@@ -1142,6 +1409,8 @@ impl App {
                 // Nothing is playing yet: store the chain for the next play()
                 // instead of pushing it over IPC.
                 self.player.af = self.audio_fx.to_mpv_af();
+                self.spectrum_bg = settings.spectrum_bg;
+                self.wallhaven_query = settings.wallhaven_query;
             }
         }
     }
@@ -1169,6 +1438,18 @@ struct Settings {
     volume: u8,
     #[serde(default)]
     audio_fx: AudioFx,
+    #[serde(default = "default_spectrum_bg")]
+    spectrum_bg: SpectrumBg,
+    #[serde(default = "default_wallhaven_query")]
+    wallhaven_query: String,
+}
+
+fn default_spectrum_bg() -> SpectrumBg {
+    SpectrumBg::Cover
+}
+
+fn default_wallhaven_query() -> String {
+    "abstract".to_string()
 }
 
 fn settings_path() -> std::path::PathBuf {

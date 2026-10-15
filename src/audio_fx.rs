@@ -261,7 +261,7 @@ mod tests {
     #[test]
     #[ignore]
     fn ipc_af_roundtrip_with_running_mpv() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::os::unix::net::UnixStream;
 
         const SOCKET: &str = "/tmp/tuidal-mpv.sock";

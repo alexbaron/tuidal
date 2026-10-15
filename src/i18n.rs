@@ -1,3 +1,5 @@
+use crate::kitty_bg::SpectrumBg;
+
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
@@ -106,6 +108,10 @@ pub struct Strings {
     pub fx_off: &'static str,
     pub fx_hints: &'static str,
     pub fx_no_mpv: &'static str,
+    // Spectrum background
+    pub bg_requires_kitty: &'static str,
+    pub bg_fetching: &'static str,
+    pub visualizer_hints: &'static str,
 }
 
 static FR: Strings = Strings {
@@ -192,7 +198,10 @@ static FR: Strings = Strings {
     fx_on: "activé",
     fx_off: "désactivé",
     fx_hints: "↑/↓ choisir  ←/→ régler  Entrée basculer  [ ] préréglage  R réinitialiser",
-    fx_no_mpv: "⚠ mpv introuvable — les effets nécessitent mpv (brew install mpv)",
+        fx_no_mpv: "⚠ mpv introuvable — les effets nécessitent mpv (brew install mpv)",
+    bg_requires_kitty: "Fond d'écran : terminal kitty requis",
+    bg_fetching: "⟳ Téléchargement d'une image wallhaven...",
+    visualizer_hints: "b fond  B nouvelle image",
 };
 
 static EN: Strings = Strings {
@@ -279,7 +288,10 @@ static EN: Strings = Strings {
     fx_on: "enabled",
     fx_off: "disabled",
     fx_hints: "↑/↓ select  ←/→ adjust  Enter toggle  [ ] preset  R reset",
-    fx_no_mpv: "⚠ mpv not found — effects require mpv (brew install mpv)",
+        fx_no_mpv: "⚠ mpv not found — effects require mpv (brew install mpv)",
+    bg_requires_kitty: "Background: kitty terminal required",
+    bg_fetching: "⟳ Fetching a wallhaven image...",
+    visualizer_hints: "b background  B new image",
 };
 
 static DE: Strings = Strings {
@@ -366,7 +378,10 @@ static DE: Strings = Strings {
     fx_on: "an",
     fx_off: "aus",
     fx_hints: "↑/↓ wählen  ←/→ ändern  Enter umschalten  [ ] Voreinstellung  R zurücksetzen",
-    fx_no_mpv: "⚠ mpv nicht gefunden — Effekte benötigen mpv (brew install mpv)",
+        fx_no_mpv: "⚠ mpv nicht gefunden — Effekte benötigen mpv (brew install mpv)",
+    bg_requires_kitty: "Hintergrund: kitty-Terminal erforderlich",
+    bg_fetching: "⟳ Wallhaven-Bild wird geladen...",
+    visualizer_hints: "b Hintergrund  B neues Bild",
 };
 
 static RO: Strings = Strings {
@@ -453,7 +468,10 @@ static RO: Strings = Strings {
     fx_on: "activat",
     fx_off: "dezactivat",
     fx_hints: "↑/↓ alege  ←/→ reglează  Enter comută  [ ] presetare  R resetează",
-    fx_no_mpv: "⚠ mpv negăsit — efectele necesită mpv (brew install mpv)",
+        fx_no_mpv: "⚠ mpv negăsit — efectele necesită mpv (brew install mpv)",
+    bg_requires_kitty: "Fundal: necesită terminalul kitty",
+    bg_fetching: "⟳ Se descarcă o imagine wallhaven...",
+    visualizer_hints: "b fundal  B imagine nouă",
 };
 
 impl Lang {
@@ -658,6 +676,39 @@ impl Lang {
             (Lang::De, n) => format!("Effekte: {n} aktive(r) Filter"),
             (Lang::Ro, 0) => "Efecte: neutru".to_string(),
             (Lang::Ro, n) => format!("Efecte: {n} filtru(e) activ(e)"),
+        }
+    }
+
+    /// Short label for a SpectrumBg source ("none", "cover", "wallhaven").
+    pub fn bg_label(self, bg: SpectrumBg) -> &'static str {
+        match (self, bg) {
+            (Lang::Fr, SpectrumBg::None) => "aucun",
+            (Lang::Fr, SpectrumBg::Cover) => "pochette",
+            (Lang::En, SpectrumBg::None) => "none",
+            (Lang::En, SpectrumBg::Cover) => "cover",
+            (Lang::De, SpectrumBg::None) => "kein",
+            (Lang::De, SpectrumBg::Cover) => "Cover",
+            (Lang::Ro, SpectrumBg::None) => "niciunul",
+            (Lang::Ro, SpectrumBg::Cover) => "copertă",
+            (_, SpectrumBg::Wallhaven) => "wallhaven",
+        }
+    }
+
+    pub fn bg_source_changed(self, label: &str) -> String {
+        match self {
+            Lang::Fr => format!("Fond : {label}"),
+            Lang::En => format!("Background: {label}"),
+            Lang::De => format!("Hintergrund: {label}"),
+            Lang::Ro => format!("Fundal: {label}"),
+        }
+    }
+
+    pub fn bg_error(self, e: &str) -> String {
+        match self {
+            Lang::Fr => format!("✗ Fond : {e}"),
+            Lang::En => format!("✗ Background: {e}"),
+            Lang::De => format!("✗ Hintergrund: {e}"),
+            Lang::Ro => format!("✗ Fundal: {e}"),
         }
     }
 }
