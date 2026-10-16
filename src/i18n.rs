@@ -55,6 +55,7 @@ pub struct Strings {
     pub hint_panes: &'static str,
     pub hint_layout: &'static str,
     pub hint_radio: &'static str,
+    pub hint_export: &'static str,
     pub hint_fav_tracks: &'static str,
     pub hint_fav_albums: &'static str,
     pub hint_lang: &'static str,
@@ -79,6 +80,14 @@ pub struct Strings {
     // Status messages (static)
     pub status_no_results: &'static str,
     pub status_no_radio_seed: &'static str,
+    pub status_export_nothing: &'static str,
+    pub status_export_loading: &'static str,
+    pub export_title: &'static str,
+    pub export_m3u_desc: &'static str,
+    pub export_csv_desc: &'static str,
+    pub export_json_desc: &'static str,
+    pub export_tidal_desc: &'static str,
+    pub export_upload_unset: &'static str,
     pub status_auth_done: &'static str,
     pub status_login_required: &'static str,
     pub status_login_required_short: &'static str,
@@ -160,6 +169,7 @@ static FR: Strings = Strings {
     hint_panes: "volets",
     hint_layout: "disposition",
     hint_radio: "radio piste/artiste",
+    hint_export: "exporter",
     hint_fav_tracks: "titres fav",
     hint_fav_albums: "albums fav",
     hint_lang: "langue",
@@ -180,6 +190,14 @@ static FR: Strings = Strings {
     login_overlay_title: " ◈ Authentification ",
     status_no_results: "Aucun résultat",
     status_no_radio_seed: "Aucun morceau sélectionné pour la radio",
+    status_export_nothing: "Rien à exporter",
+    status_export_loading: "⟳ Récupération des pistes pour l'export...",
+    export_title: "Exporter",
+    export_m3u_desc: "liens Tidal, lisible par les lecteurs",
+    export_csv_desc: "tableur / réimport",
+    export_json_desc: "métadonnées complètes",
+    export_tidal_desc: "nouvelle playlist dans ta bibliothèque Tidal",
+    export_upload_unset: "upload : définir export_upload_url dans settings.json",
     status_auth_done: "✓ Authentifié auprès de Tidal",
     status_login_required: "Connectez-vous d'abord avec 'L'",
     status_login_required_short: "Connectez-vous d'abord (L)",
@@ -258,6 +276,7 @@ static EN: Strings = Strings {
     hint_panes: "panes",
     hint_layout: "layout",
     hint_radio: "track/artist radio",
+    hint_export: "export",
     hint_fav_tracks: "fav tracks",
     hint_fav_albums: "fav albums",
     hint_lang: "language",
@@ -278,6 +297,14 @@ static EN: Strings = Strings {
     login_overlay_title: " ◈ Authentication ",
     status_no_results: "No results",
     status_no_radio_seed: "No track selected for the radio",
+    status_export_nothing: "Nothing to export",
+    status_export_loading: "⟳ Fetching tracks for export...",
+    export_title: "Export",
+    export_m3u_desc: "Tidal links, player-readable",
+    export_csv_desc: "spreadsheet / re-import",
+    export_json_desc: "full metadata",
+    export_tidal_desc: "new playlist in your Tidal library",
+    export_upload_unset: "upload: set export_upload_url in settings.json",
     status_auth_done: "✓ Authenticated with Tidal",
     status_login_required: "Log in first with 'L'",
     status_login_required_short: "Log in first (L)",
@@ -356,6 +383,7 @@ static DE: Strings = Strings {
     hint_panes: "Bereiche",
     hint_layout: "Layout",
     hint_radio: "Titel-/Künstler-Radio",
+    hint_export: "exportieren",
     hint_fav_tracks: "Fav-Titel",
     hint_fav_albums: "Fav-Alben",
     hint_lang: "Sprache",
@@ -376,6 +404,14 @@ static DE: Strings = Strings {
     login_overlay_title: " ◈ Authentifizierung ",
     status_no_results: "Keine Ergebnisse",
     status_no_radio_seed: "Kein Titel für das Radio ausgewählt",
+    status_export_nothing: "Nichts zu exportieren",
+    status_export_loading: "⟳ Titel für den Export werden geladen...",
+    export_title: "Exportieren",
+    export_m3u_desc: "Tidal-Links, von Playern lesbar",
+    export_csv_desc: "Tabelle / Reimport",
+    export_json_desc: "vollständige Metadaten",
+    export_tidal_desc: "neue Playlist in deiner Tidal-Bibliothek",
+    export_upload_unset: "Upload: export_upload_url in settings.json setzen",
     status_auth_done: "✓ Bei Tidal authentifiziert",
     status_login_required: "Zuerst mit 'L' anmelden",
     status_login_required_short: "Zuerst anmelden (L)",
@@ -454,6 +490,7 @@ static RO: Strings = Strings {
     hint_panes: "panouri",
     hint_layout: "aspect",
     hint_radio: "radio piesă/artist",
+    hint_export: "exportă",
     hint_fav_tracks: "piese fav",
     hint_fav_albums: "albume fav",
     hint_lang: "limbă",
@@ -474,6 +511,14 @@ static RO: Strings = Strings {
     login_overlay_title: " ◈ Autentificare ",
     status_no_results: "Niciun rezultat",
     status_no_radio_seed: "Niciun titlu selectat pentru radio",
+    status_export_nothing: "Nimic de exportat",
+    status_export_loading: "⟳ Se preiau piesele pentru export...",
+    export_title: "Exportă",
+    export_m3u_desc: "linkuri Tidal, citibil de playere",
+    export_csv_desc: "tabel / reimport",
+    export_json_desc: "metadate complete",
+    export_tidal_desc: "playlist nou în biblioteca ta Tidal",
+    export_upload_unset: "upload: setează export_upload_url în settings.json",
     status_auth_done: "✓ Autentificat în Tidal",
     status_login_required: "Autentifică-te mai întâi cu 'L'",
     status_login_required_short: "Autentifică-te mai întâi (L)",
@@ -578,6 +623,53 @@ impl Lang {
             Lang::En => format!("Searching \"{q}\"..."),
             Lang::De => format!("Suche \"{q}\"..."),
             Lang::Ro => format!("Se caută \"{q}\"..."),
+        }
+    }
+
+    /// Popup line naming the export target, "· n pistes" when n is known.
+    pub fn export_target_line(self, name: &str, n: Option<usize>) -> String {
+        match (self, n) {
+            (Lang::Fr, Some(n)) => format!("{name} · {n} pistes"),
+            (Lang::En, Some(n)) => format!("{name} · {n} tracks"),
+            (Lang::De, Some(n)) => format!("{name} · {n} Titel"),
+            (Lang::Ro, Some(n)) => format!("{name} · {n} piese"),
+            (_, _) => name.to_string(),
+        }
+    }
+
+    pub fn export_tidal_done(self, title: &str, added: usize) -> String {
+        match self {
+            Lang::Fr => format!("✓ Playlist Tidal créée : « {title} » ({added} pistes)"),
+            Lang::En => format!("✓ Tidal playlist created: “{title}” ({added} tracks)"),
+            Lang::De => format!("✓ Tidal-Playlist erstellt: „{title}“ ({added} Titel)"),
+            Lang::Ro => format!("✓ Playlist Tidal creat: „{title}” ({added} piese)"),
+        }
+    }
+
+    pub fn export_upload_done(self, host: &str, status: u16) -> String {
+        match self {
+            Lang::Fr => format!("✓ Envoyé à {host} (HTTP {status})"),
+            Lang::En => format!("✓ Uploaded to {host} (HTTP {status})"),
+            Lang::De => format!("✓ Hochgeladen zu {host} (HTTP {status})"),
+            Lang::Ro => format!("✓ Trimis la {host} (HTTP {status})"),
+        }
+    }
+
+    pub fn export_done(self, path: &str) -> String {
+        match self {
+            Lang::Fr => format!("✓ Exporté : {path}"),
+            Lang::En => format!("✓ Exported: {path}"),
+            Lang::De => format!("✓ Exportiert: {path}"),
+            Lang::Ro => format!("✓ Exportat: {path}"),
+        }
+    }
+
+    pub fn export_error(self, e: &str) -> String {
+        match self {
+            Lang::Fr => format!("✗ Export : {e}"),
+            Lang::En => format!("✗ Export: {e}"),
+            Lang::De => format!("✗ Export: {e}"),
+            Lang::Ro => format!("✗ Export: {e}"),
         }
     }
 

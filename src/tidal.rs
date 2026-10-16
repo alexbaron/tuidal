@@ -64,6 +64,8 @@ pub struct Track {
     pub album: Album,
     pub audio_quality: Option<String>,
     pub explicit: Option<bool>,
+    #[serde(default)]
+    pub isrc: Option<String>,
 }
 
 impl Track {
@@ -139,6 +141,14 @@ pub struct Playlist {
     pub public_playlist: Option<bool>,
     pub image: Option<String>,
     pub square_image: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatedPlaylist {
+    pub uuid: String,
+    pub title: String,
+    pub added: usize,
 }
 
 #[allow(dead_code)]
@@ -797,6 +807,25 @@ impl TidalDaemonClient {
     pub async fn get_playlist_tracks(&self, uuid: &str) -> Result<Vec<Track>> {
         let v = self
             .call("playlist_tracks", serde_json::json!({"uuid": uuid}))
+            .await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn create_playlist(
+        &self,
+        title: &str,
+        description: &str,
+        track_ids: &[u64],
+    ) -> Result<CreatedPlaylist> {
+        let v = self
+            .call(
+                "create_playlist",
+                serde_json::json!({
+                    "title": title,
+                    "description": description,
+                    "track_ids": track_ids,
+                }),
+            )
             .await?;
         serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
     }

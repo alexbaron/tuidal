@@ -1,5 +1,4 @@
-//use crate::app::{App, InputMode, Tab};
-use crate::app::{App, CollectionView, InputMode, Tab};
+use crate::app::{App, CollectionView, ExportTarget, InputMode, Tab};
 use crate::player::PlayerState;
 use ratatui::{
     Frame,
@@ -47,6 +46,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     if app.device_code.is_some() {
         draw_login_overlay(f, app, area);
+    }
+    if app.input_mode == InputMode::Export {
+        draw_export_popup(f, app);
     }
 }
 
@@ -1065,6 +1067,7 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
             hint_key("h/l", s.hint_panes),
             hint_key("S", s.hint_layout),
             hint_key("r/R", s.hint_radio),
+            hint_key("e", s.hint_export),
             hint_key("F", s.hint_fav_tracks),
             hint_key("A", s.hint_fav_albums),
             hint_key("Alt+L", s.hint_lang),
@@ -2028,6 +2031,85 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Export format chooser (InputMode::Export): target line + three options.
+fn draw_export_popup(f: &mut Frame, app: &App) {
+    let s = app.lang.strings();
+    let upload_configured = app.export_upload_url.is_some();
+    let popup = centered_rect(50, if upload_configured { 12 } else { 11 }, f.area());
+    f.render_widget(Clear, popup);
+    let (name, n) = match &app.export_target {
+        Some(ExportTarget::Queue) => (
+            s.queue_title.to_string(),
+            Some(app.queue.len()),
+        ),
+        Some(ExportTarget::Playlist { title, .. }) => (title.clone(), None),
+        Some(ExportTarget::Mix { title, .. }) => (title.clone(), None),
+        Some(ExportTarget::Album { title, .. }) => (title.clone(), None),
+        None => (String::new(), None),
+    };
+    let opt = |key: &str, label: &str, desc: &str| {
+        Line::from(vec![
+            Span::styled(format!("  [{key}] "), Style::default().fg(ACCENT)),
+            Span::styled(
+                format!("{label:<5}"),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {desc}"), Style::default().fg(MUTED)),
+        ])
+    };
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!(" {}", app.lang.export_target_line(&name, n)),
+                Style::default().fg(TEXT),
+            )),
+            Line::raw(""),
+            opt("1", crate::export::ExportFormat::M3u8.label(), s.export_m3u_desc),
+            opt("2", crate::export::ExportFormat::Csv.label(), s.export_csv_desc),
+            opt("3", crate::export::ExportFormat::Json.label(), s.export_json_desc),
+            opt("4/t", "Tidal", s.export_tidal_desc),
+            if upload_configured {
+                Line::from(vec![
+                    Span::styled("  [5/u] ", Style::default().fg(ACCENT)),
+                    Span::styled(
+                        "Upload",
+                        Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(
+                            " {}",
+                            reqwest::Url::parse(app.export_upload_url.as_deref().unwrap_or(""))
+                                .ok()
+                                .and_then(|u| u.host_str().map(str::to_string))
+                                .unwrap_or_default()
+                        ),
+                        Style::default().fg(MUTED),
+                    ),
+                ])
+            } else {
+                Line::from(Span::styled(
+                    format!("  [u] {}", s.export_upload_unset),
+                    Style::default().fg(MUTED),
+                ))
+            },
+            Line::raw(""),
+            Line::from(Span::styled(" Esc", Style::default().fg(DIM))),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT))
+                .title(Span::styled(
+                    format!(" {} ", s.export_title),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ))
+                .padding(Padding::horizontal(1)),
+        ),
+        popup,
+    );
+}
+
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     let popup_width = area.width * percent_x / 100;
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
@@ -2097,6 +2179,7 @@ mod split_tests {
             album: Album { id: 1, title: "Al".into() },
             audio_quality: None,
             explicit: None,
+            isrc: None,
         }
     }
 

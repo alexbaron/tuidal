@@ -26,6 +26,18 @@ pub enum InputMode {
     Theme,
     /// fzf-style local fuzzy filter on the active list.
     Filter,
+    /// Export format chooser popup.
+    Export,
+}
+
+/// What an export covers — the queue, or a library item whose tracks must
+/// be fetched first.
+#[derive(Debug, Clone)]
+pub enum ExportTarget {
+    Queue,
+    Playlist { uuid: String, title: String },
+    Mix { id: String, title: String },
+    Album { id: u64, title: String },
 }
 
 /// Fuzzy haystack for a track row: "title artists album".
@@ -110,6 +122,14 @@ pub enum AppEvent {
     PlaylistTracksLoaded(Vec<Track>),
     RadioLoaded { title: String, tracks: Vec<Track> },
     RadioError(String),
+    ExportTracksReady {
+        dest: crate::export::ExportDestination,
+        title: String,
+        tracks: Vec<Track>,
+    },
+    ExportUploaded { status: u16 },
+    ExportPlaylistCreated { title: String, added: usize },
+    ExportError(String),
     FavTracksLoaded(Vec<Track>),
     FavAlbumsLoaded(Vec<FavAlbum>),
     ApiCmd(ApiCommand),
@@ -253,6 +273,16 @@ pub struct App {
     pub layout: LayoutMode,
     /// Body width written by draw_body each frame (for split_active()).
     pub body_width: u16,
+    /// Target of the pending export (InputMode::Export popup).
+    pub export_target: Option<ExportTarget>,
+    /// Custom export directory (settings key `export_dir`).
+    pub export_dir: Option<String>,
+    /// Upload endpoint for `u` in the export popup (settings/env).
+    pub export_upload_url: Option<String>,
+    /// Format used for upload (default Json).
+    pub export_upload_format: crate::export::ExportFormat,
+    /// Optional bearer token for the upload endpoint.
+    pub export_upload_token: Option<String>,
     pub queue_index: Option<usize>,
 
     pub authenticated: bool,
@@ -348,6 +378,11 @@ impl App {
             queue_selected: 0,
             layout: LayoutMode::default(),
             body_width: 0,
+            export_target: None,
+            export_dir: None,
+            export_upload_url: None,
+            export_upload_format: crate::export::ExportFormat::default(),
+            export_upload_token: None,
             queue_index: None,
             authenticated: false,
             status_msg: String::new(),
@@ -684,6 +719,45 @@ impl App {
                 self.status_msg = self.lang.radio_error(&e);
                 self.loading = false;
             }
+            AppEvent::ExportTracksReady {
+                dest,
+                title,
+                tracks,
+            } => {
+                self.loading = false;
+                match dest {
+                    crate::export::ExportDestination::File(format) => {
+                        self.export_write(format, &title, &tracks);
+                    }
+                    crate::export::ExportDestination::Tidal => {
+                        self.export_to_tidal(&title, &tracks);
+                    }
+                    crate::export::ExportDestination::Upload => {
+                        self.export_upload(&title, &tracks);
+                    }
+                }
+            }
+            AppEvent::ExportPlaylistCreated { title, added } => {
+                self.loading = false;
+                self.status_msg = self.lang.export_tidal_done(&title, added);
+                if !self.playlists.is_empty() && self.theme_query.is_none() {
+                    self.load_library_bg();
+                }
+            }
+            AppEvent::ExportUploaded { status } => {
+                self.loading = false;
+                let host = self
+                    .export_upload_url
+                    .as_deref()
+                    .and_then(|u| reqwest::Url::parse(u).ok())
+                    .and_then(|u| u.host_str().map(str::to_string))
+                    .unwrap_or_default();
+                self.status_msg = self.lang.export_upload_done(&host, status);
+            }
+            AppEvent::ExportError(e) => {
+                self.loading = false;
+                self.status_msg = self.lang.export_error(&e);
+            }
             AppEvent::FavTracksLoaded(tracks) => {
                 self.queue = tracks;
                 self.queue_index = None;
@@ -783,6 +857,7 @@ impl App {
                         },
                         audio_quality: None,
                         explicit: None,
+                        isrc: None,
                     };
                     if !self.queue.iter().any(|t| t.id == track.id) {
                         self.queue.push(track.clone());
@@ -882,7 +957,7 @@ impl App {
         match self.live_search_mode {
             InputMode::Search => self.do_search_bg(),
             InputMode::Theme => self.do_theme_search_bg(),
-            InputMode::Normal | InputMode::Filter => {}
+            _ => {}
         }
     }
 
@@ -960,6 +1035,186 @@ impl App {
                 }
             }
         });
+    }
+
+    /// `e`: pick what to export and open the format chooser popup.
+    pub fn open_export_menu(&mut self) {
+        let target = match self.active_tab {
+            Tab::Library => {
+                if self.collection_view == CollectionView::Albums {
+                    self.resolve_index(self.fav_album_selected)
+                        .and_then(|i| self.fav_albums.get(i))
+                        .map(|a| ExportTarget::Album {
+                            id: a.id,
+                            title: a.title.clone(),
+                        })
+                } else {
+                    self.resolve_index(self.library_selected).and_then(|i| {
+                        if let Some(p) = self.playlists.get(i) {
+                            Some(ExportTarget::Playlist {
+                                uuid: p.uuid.clone(),
+                                title: p.title.clone(),
+                            })
+                        } else {
+                            self.mixes.get(i - self.playlists.len()).map(|m| {
+                                ExportTarget::Mix {
+                                    id: m.id.clone(),
+                                    title: m.title.clone(),
+                                }
+                            })
+                        }
+                    })
+                }
+            }
+            _ => Some(ExportTarget::Queue),
+        };
+        let Some(target) = target else {
+            self.status_msg = self.lang.strings().status_export_nothing.to_string();
+            return;
+        };
+        // An empty queue exports nothing.
+        if matches!(target, ExportTarget::Queue) && self.queue.is_empty() {
+            self.status_msg = self.lang.strings().status_export_nothing.to_string();
+            return;
+        }
+        self.export_target = Some(target);
+        self.input_mode = InputMode::Export;
+    }
+
+    /// Destination picked in the popup: export now (queue) or fetch tracks.
+    pub fn export_as(&mut self, dest: crate::export::ExportDestination) {
+        self.input_mode = InputMode::Normal;
+        let Some(target) = self.export_target.take() else {
+            return;
+        };
+        match target {
+            ExportTarget::Queue => {
+                let tracks = self.queue.clone();
+                self.export_deliver(dest, "queue", tracks);
+            }
+            _ => {
+                let title = match &target {
+                    ExportTarget::Playlist { title, .. }
+                    | ExportTarget::Mix { title, .. }
+                    | ExportTarget::Album { title, .. } => title.clone(),
+                    ExportTarget::Queue => unreachable!(),
+                };
+                self.loading = true;
+                self.status_msg = self.lang.strings().status_export_loading.to_string();
+                let tx = self.tx();
+                let tidal = self.tidal.clone();
+                tokio::spawn(async move {
+                    let result = match target {
+                        ExportTarget::Playlist { uuid, .. } => {
+                            tidal.get_playlist_tracks(&uuid).await
+                        }
+                        ExportTarget::Mix { id, .. } => tidal.get_mix_tracks(&id).await,
+                        ExportTarget::Album { id, .. } => tidal.get_album_tracks(id).await,
+                        ExportTarget::Queue => unreachable!(),
+                    };
+                    match result {
+                        Ok(tracks) => {
+                            let _ = tx.send(AppEvent::ExportTracksReady {
+                                dest,
+                                title,
+                                tracks,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppEvent::ExportError(e.to_string()));
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /// Deliver an already-available track list to the chosen destination.
+    fn export_deliver(
+        &mut self,
+        dest: crate::export::ExportDestination,
+        title: &str,
+        tracks: Vec<Track>,
+    ) {
+        match dest {
+            crate::export::ExportDestination::File(format) => {
+                self.export_write(format, title, &tracks);
+            }
+            crate::export::ExportDestination::Tidal => self.export_to_tidal(title, &tracks),
+            crate::export::ExportDestination::Upload => self.export_upload(title, &tracks),
+        }
+    }
+
+    /// Save the tracks as a new playlist in the user's Tidal library.
+    fn export_to_tidal(&mut self, title: &str, tracks: &[Track]) {
+        let pl_title = if title == "queue" {
+            format!("tuidal queue {}", crate::export::timestamp_local().0)
+        } else {
+            format!("{title} (tuidal)")
+        };
+        let ids: Vec<u64> = tracks.iter().map(|t| t.id).collect();
+        self.loading = true;
+        let tx = self.tx();
+        let tidal = self.tidal.clone();
+        tokio::spawn(async move {
+            match tidal
+                .create_playlist(&pl_title, "Exported from tuidal", &ids)
+                .await
+            {
+                Ok(cp) => {
+                    let _ = tx.send(AppEvent::ExportPlaylistCreated {
+                        title: cp.title,
+                        added: cp.added,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::ExportError(e.to_string()));
+                }
+            }
+        });
+    }
+
+    /// POST the export to the configured upload URL.
+    fn export_upload(&mut self, title: &str, tracks: &[Track]) {
+        let Some(url) = self.export_upload_url.clone() else {
+            self.status_msg = self.lang.strings().export_upload_unset.to_string();
+            return;
+        };
+        let token = self.export_upload_token.clone();
+        let format = self.export_upload_format;
+        let tracks = tracks.to_vec();
+        let title = title.to_string();
+        self.loading = true;
+        self.status_msg = self.lang.strings().status_export_loading.to_string();
+        let tx = self.tx();
+        tokio::spawn(async move {
+            match crate::export::upload(&url, token.as_deref(), format, &title, &tracks).await {
+                Ok(status) => {
+                    let _ = tx.send(AppEvent::ExportUploaded { status });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::ExportError(e.to_string()));
+                }
+            }
+        });
+    }
+
+    /// Write the export file and report the path in the status line.
+    fn export_write(
+        &mut self,
+        format: crate::export::ExportFormat,
+        title: &str,
+        tracks: &[Track],
+    ) {
+        let dir = self
+            .export_dir
+            .clone()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(crate::export::default_dir);
+        match crate::export::write(format, &dir, title, tracks) {
+            Ok(path) => self.status_msg = self.lang.export_done(&shorten_home(&path)),
+            Err(e) => self.status_msg = self.lang.export_error(&e.to_string()),
+        }
     }
 
     pub fn add_selected_to_queue(&mut self) {
@@ -2045,6 +2300,10 @@ impl App {
             wallhaven_query: self.wallhaven_query.clone(),
             search_limit: self.search_limit,
             layout: self.layout,
+            export_dir: self.export_dir.clone(),
+            export_upload_url: self.export_upload_url.clone(),
+            export_upload_format: self.export_upload_format,
+            export_upload_token: self.export_upload_token.clone(),
         };
         let path = settings_path();
         if let Some(parent) = path.parent() {
@@ -2071,6 +2330,28 @@ impl App {
                 self.wallhaven_query = settings.wallhaven_query;
                 self.search_limit = settings.search_limit;
                 self.layout = settings.layout;
+                self.export_dir = settings.export_dir;
+                self.export_upload_url = settings.export_upload_url;
+                self.export_upload_format = settings.export_upload_format;
+                self.export_upload_token = settings.export_upload_token;
+                // Env overrides for the upload endpoint (env wins).
+                if let Ok(v) = std::env::var("TUIDAL_EXPORT_UPLOAD_URL")
+                    && !v.is_empty()
+                {
+                    self.export_upload_url = Some(v);
+                }
+                if let Ok(v) = std::env::var("TUIDAL_EXPORT_UPLOAD_FORMAT")
+                    && let Ok(f) = serde_json::from_str::<crate::export::ExportFormat>(
+                        &format!("\"{}\"", v.to_lowercase()),
+                    )
+                {
+                    self.export_upload_format = f;
+                }
+                if let Ok(v) = std::env::var("TUIDAL_EXPORT_UPLOAD_TOKEN")
+                    && !v.is_empty()
+                {
+                    self.export_upload_token = Some(v);
+                }
             }
         }
     }
@@ -2108,6 +2389,24 @@ struct Settings {
     search_limit: usize,
     #[serde(default)]
     layout: LayoutMode,
+    #[serde(default)]
+    export_dir: Option<String>,
+    #[serde(default)]
+    export_upload_url: Option<String>,
+    #[serde(default)]
+    export_upload_format: crate::export::ExportFormat,
+    #[serde(default)]
+    export_upload_token: Option<String>,
+}
+
+/// Display a path with `~` in place of the home directory when possible.
+fn shorten_home(path: &std::path::Path) -> String {
+    if let Some(home) = dirs::home_dir()
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rest.display());
+    }
+    path.display().to_string()
 }
 
 fn default_spectrum_bg() -> SpectrumBg {

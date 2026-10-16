@@ -13,6 +13,7 @@ Modes :
   python3 tidal.py playlist_tracks <uuid>
   python3 tidal.py track_radio <id>
   python3 tidal.py artist_radio <id>
+  python3 tidal.py create_playlist <title> <ids_csv>
   python3 tidal.py mixes
   python3 tidal.py mix_tracks <id>
   python3 tidal.py fav_tracks
@@ -198,6 +199,7 @@ def _track_dict(t: tidalapi.Track) -> dict:
         "album":         {"id": t.album.id, "title": t.album.name},
         "audio_quality": str(getattr(t, "audio_quality", "") or ""),
         "explicit":      getattr(t, "explicit", False),
+        "isrc":          getattr(t, "isrc", None),
     }
 
 
@@ -304,6 +306,18 @@ def handle_artist_radio(session, artist_id, limit=50):
     return [_track_dict(t) for t in tracks if isinstance(t, tidalapi.Track)]
 
 
+def handle_create_playlist(session, title, description="", track_ids=None):
+    pl = session.user.create_playlist(title, description)
+    added = 0
+    ids = [int(i) for i in (track_ids or [])]
+    for i in range(0, len(ids), 100):
+        chunk = ids[i:i + 100]
+        if chunk:
+            pl.add(chunk, allow_duplicates=True)
+            added += len(chunk)
+    return {"uuid": str(pl.id), "title": pl.name, "added": added}
+
+
 def handle_mixes(session):
     mixes = session.mixes()
     result = []
@@ -359,6 +373,7 @@ HANDLERS = {
     "lyrics":         handle_lyrics,
     "playlists":      handle_playlists,
     "search_playlists": handle_search_playlists,
+    "create_playlist": handle_create_playlist,
     "track_radio":    handle_track_radio,
     "artist_radio":   handle_artist_radio,
     "playlist_tracks": handle_playlist_tracks,
@@ -581,6 +596,18 @@ def cli_lyrics(track_id):
         out({"error": str(e)})
 
 
+def cli_create_playlist(title, ids_csv):
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
+        return
+    try:
+        ids = [int(x) for x in ids_csv.split(",") if x.strip()]
+        out(handle_create_playlist(session, title, "Exported from tuidal", ids))
+    except Exception as e:
+        out({"error": str(e)})
+
+
 def cli_track_radio(track_id):
     session = open_session()
     if not session.check_login():
@@ -642,6 +669,8 @@ if __name__ == "__main__":
             cli_track_radio(int(track_id))
         case ["artist_radio", artist_id]:
             cli_artist_radio(int(artist_id))
+        case ["create_playlist", title, ids_csv]:
+            cli_create_playlist(title, ids_csv)
         case ["stream", track_id]:
             cli_stream(int(track_id))
         case ["stream", track_id, quality]:

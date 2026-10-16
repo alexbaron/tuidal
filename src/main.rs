@@ -1,3 +1,4 @@
+mod export;
 mod api;
 mod app;
 mod audio_fx;
@@ -286,6 +287,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     handle_text_input(key.code, app, App::do_theme_search_bg)
                                 }
                                 InputMode::Filter => handle_filter(key, app),
+                                InputMode::Export => handle_export(key.code, app),
                             }
                         }
                     }
@@ -382,6 +384,7 @@ fn handle_normal(key: KeyCode, app: &mut App) {
             }
         }
         KeyCode::Char('S') => app.cycle_layout(),
+        KeyCode::Char('e') => app.open_export_menu(),
         KeyCode::Char('r') => app.start_track_radio_bg(),
         KeyCode::Char('R') => app.start_artist_radio_bg(),
         KeyCode::Char('i') => {
@@ -420,6 +423,40 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         KeyCode::Char('1') => app.set_quality(tidal::Quality::HiResLossless),
         KeyCode::Char('2') => app.set_quality(tidal::Quality::Lossless),
         KeyCode::Char('3') => app.set_quality(tidal::Quality::High),
+        _ => {}
+    }
+}
+
+/// Format chooser popup (InputMode::Export): 1/m M3U8, 2/c CSV, 3/j JSON.
+fn handle_export(key: crossterm::event::KeyCode, app: &mut App) {
+    match key {
+        crossterm::event::KeyCode::Char('1') | crossterm::event::KeyCode::Char('m') => {
+            app.export_as(crate::export::ExportDestination::File(
+                crate::export::ExportFormat::M3u8,
+            ))
+        }
+        crossterm::event::KeyCode::Char('2') | crossterm::event::KeyCode::Char('c') => {
+            app.export_as(crate::export::ExportDestination::File(
+                crate::export::ExportFormat::Csv,
+            ))
+        }
+        crossterm::event::KeyCode::Char('3') | crossterm::event::KeyCode::Char('j') => {
+            app.export_as(crate::export::ExportDestination::File(
+                crate::export::ExportFormat::Json,
+            ))
+        }
+        crossterm::event::KeyCode::Char('4') | crossterm::event::KeyCode::Char('t') => {
+            app.export_as(crate::export::ExportDestination::Tidal)
+        }
+        crossterm::event::KeyCode::Char('5') | crossterm::event::KeyCode::Char('u') => {
+            if app.export_upload_url.is_some() {
+                app.export_as(crate::export::ExportDestination::Upload);
+            }
+        }
+        crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') => {
+            app.input_mode = InputMode::Normal;
+            app.export_target = None;
+        }
         _ => {}
     }
 }

@@ -28,6 +28,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - 🔑 OAuth Device Flow authentication (no password required)
 - 📈 Real-time audio spectrum tab — cava-style bars or curve
 - 📻 Track / artist radio — Tidal's native stations from any track (`r`) or its artist (`R`)
+- 📤 Playlist export — queue, playlist, mix or album to M3U8 / CSV / JSON (metadata and Tidal links only), straight into a new Tidal playlist, or POSTed to a configurable URL
 - 🪟 Split view — search on the left, queue on the right, with `h`/`l` to move focus, `S` to toggle, automatic fallback to tabs under 100 columns
 - 🖼️ Optional background image behind the spectrum (album cover or random wallhaven.cc wallpaper): true under-the-text background on kitty; on Sixel/iTerm2 the spectrum is composited into the image (lower frame rate, Sixel slower)
 - 🎛️ Effects tab: 10-band equalizer with presets, balance, bass/treble, stereo width, crossfeed, echo, compressor, volume normalization (requires mpv)
@@ -160,7 +161,8 @@ Persisted keys include `lang`, `quality`, `volume`, `audio_fx`, `spectrum_bg`
 (`"none"` | `"cover"` | `"wallhaven"`, default `"cover"`), `spectrum_style`
 (`"bars"` | `"curve"`, default `"bars"`), `wallhaven_query`
 (default `"abstract"`) and `search_limit` (max results per search, default `50`).
-`layout` selects the main view: `"split"` (default, side-by-side Search/Queue panes, automatically falls back to tabs under 100 columns) or `"tabs"`.
+`export_dir` overrides the export directory (default: `$TUIDAL_EXPORT_DIR`, else `~/Music/tuidal`, else `~/.config/tuidal/exports`).
+`export_upload_url`, `export_upload_format` (`"json"` default, or `"csv"`/`"m3u8"`) and `export_upload_token` configure the `u` upload destination — each can also be set via the env vars `TUIDAL_EXPORT_UPLOAD_URL`, `TUIDAL_EXPORT_UPLOAD_FORMAT`, `TUIDAL_EXPORT_UPLOAD_TOKEN` (env wins). The request is `POST <url>` with the rendered export as the body, `Content-Type` `application/json` / `text/csv; charset=utf-8` / `audio/x-mpegurl; charset=utf-8`, headers `X-Tuidal-Title`, `X-Tuidal-Format`, and `Authorization: Bearer <token>` when a token is set; the token is never displayed. `layout` selects the main view: `"split"` (default, side-by-side Search/Queue panes, automatically falls back to tabs under 100 columns) or `"tabs"`.
 
 ### Python Executable Path (`TUIDAL_PYTHON_PATH`)
 
@@ -255,6 +257,7 @@ cargo run
 | `S` | Toggle split view ↔ tabs |
 | `r` | Start track radio from selected/playing track |
 | `R` | Start artist radio (except on Effects tab) |
+| `e` | Export queue / playlist / mix / album — `1/2/3` M3U8/CSV/JSON, `t` new Tidal playlist, `u` upload |
 | `j` / `k` or `↓` / `↑` | Navigate list |
 | `1` | Quality: HiRes FLAC 24bit |
 | `2` | Quality: FLAC 16bit/44.1kHz |
