@@ -46,8 +46,11 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 
 ### Python dependency
 
+The Tidal API side lives in `tidal.py`, which needs the [tidalapi](https://github.com/EbbLabs/python-tidal) package. The recommended setup is a virtual environment in the project root, which tuidal picks up automatically (see [Python environment](#python-environment-venv)):
+
 ```bash
-pip install tidalapi
+python3 -m venv .venv
+.venv/bin/pip install tidalapi
 ```
 
 ---
@@ -57,6 +60,7 @@ pip install tidalapi
 ```bash
 git clone https://github.com/VicMeGa/tuidal
 cd tuidal
+python3 -m venv .venv && .venv/bin/pip install tidalapi
 cargo build --release
 ```
 
@@ -67,6 +71,39 @@ cp tidal.py target/release/
 ```
 
 Or run directly from the project root with `cargo run`.
+
+> Note: `tidal.py` is looked up **next to the binary first**, then in the current directory. After pulling changes that touch `tidal.py`, copy it again, otherwise the binary keeps running the stale copy in `target/release/`.
+
+### Python environment (venv)
+
+tuidal never needs tidalapi installed system-wide. At startup it resolves the Python interpreter used to run `tidal.py` in this order:
+
+1. `TUIDAL_PYTHON_PATH` — explicit interpreter path, if set and non-empty;
+2. `$VIRTUAL_ENV/bin/python` — the venv currently activated in your shell;
+3. `.venv/bin/python` next to `tidal.py` (i.e. in the project root, or next to the binary if you copied the venv there);
+4. `.venv/bin/python` in the current working directory;
+5. plain `python3` from `PATH`.
+
+Typical workflows:
+
+```bash
+# A) Project-local venv, no activation needed (recommended)
+python3 -m venv .venv
+.venv/bin/pip install tidalapi
+cargo run                      # finds .venv/ next to tidal.py
+
+# B) Any venv, activated in the shell
+python3 -m venv ~/.venvs/tuidal
+source ~/.venvs/tuidal/bin/activate
+pip install tidalapi
+./target/release/tuidal        # uses $VIRTUAL_ENV
+
+# C) Any interpreter, pinned explicitly (systemd units, scripts, NixOS...)
+export TUIDAL_PYTHON_PATH="$HOME/.venvs/tuidal/bin/python"
+./target/release/tuidal
+```
+
+To upgrade tidalapi later: `.venv/bin/pip install -U tidalapi`. To check which interpreter and script will be used, run `.venv/bin/python tidal.py auth poll` from the project root — it must print `{"authenticated": ...}` without an import error.
 
 ### API credentials
 
@@ -106,18 +143,14 @@ pkgs.mkShell {
 }
 ```
 
-Then install tidalapi inside the shell:
+Then create the virtual environment inside the shell (recommended on NixOS, where `pip install` into the system Python is not possible):
 
 ```bash
-pip install tidalapi --break-system-packages
+python3 -m venv .venv
+.venv/bin/pip install tidalapi
 ```
 
-Or use a virtual environment (recommended on NixOS):
-
-```bash
-python3 -m venv ~/my_python
-~/my_python/bin/pip install tidalapi
-```
+tuidal detects `.venv/` automatically; see [Python environment](#python-environment-venv) for the other options.
 
 ### Settings (`~/.config/tuidal/settings.json`)
 
@@ -127,16 +160,12 @@ Persisted keys include `lang`, `quality`, `volume`, `audio_fx`, `spectrum_bg`
 
 ### Python Executable Path (`TUIDAL_PYTHON_PATH`)
 
-By default, tuidal uses `python3` as the executable. You can specify a custom Python interpreter **without modifying the code** by setting the environment variable `TUIDAL_PYTHON_PATH` before running tuidal.
-
-**Example:**
+Overrides the interpreter used to run `tidal.py`, taking precedence over the automatic venv detection described in [Python environment](#python-environment-venv).
 
 ```bash
-export TUIDAL_PYTHON_PATH="/home/youruser/my_python/bin/python3"
+export TUIDAL_PYTHON_PATH="/home/youruser/.venvs/tuidal/bin/python"
 cargo run # or ./target/release/tuidal
 ```
-
-If not set, tuidal defaults to running `python3` from your system PATH. This makes tuidal portable across environments, virtualenvs, and OS distributions.
 
 ### Image Protocol Override (`TUIDAL_IMAGE_PROTOCOL`)
 
@@ -166,7 +195,7 @@ tuidal uses the **OAuth Device Flow** — no password is stored or required.
 ### Option B — from the command line (recommended for first login)
 
 ```bash
-python3 tidal.py auth start
+.venv/bin/python tidal.py auth start   # or: python3 tidal.py auth start
 ```
 
 Output:
@@ -179,7 +208,7 @@ Open the URL in your browser, log in to Tidal, and enter the displayed code. The
 ### Check if you are logged in
 
 ```bash
-python3 tidal.py auth poll
+.venv/bin/python tidal.py auth poll
 ```
 
 If logged in:
