@@ -30,6 +30,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - 🖼️ Optional background image behind the spectrum (album cover or random wallhaven.cc wallpaper): true under-the-text background on kitty; on Sixel/iTerm2 the spectrum is composited into the image (lower frame rate, Sixel slower)
 - 🎛️ Effects tab: 10-band equalizer with presets, balance, bass/treble, stereo width, crossfeed, echo, compressor, volume normalization (requires mpv)
 - 🎼 Theme search — find editorial playlists by genre or mood (trip hop, classical, lofi…)
+- ⚡ fzf-style fuzzy filter on any list + live search-as-you-type
 - 🎛️ System media controls — MPRIS on Linux (playerctl, GNOME, polybar…), media keys / Control Center / Now Playing on macOS
 
 ---
@@ -121,8 +122,8 @@ python3 -m venv ~/my_python
 ### Settings (`~/.config/tuidal/settings.json`)
 
 Persisted keys include `lang`, `quality`, `volume`, `audio_fx`, `spectrum_bg`
-(`"none"` | `"cover"` | `"wallhaven"`, default `"cover"`) and `wallhaven_query`
-(default `"abstract"`).
+(`"none"` | `"cover"` | `"wallhaven"`, default `"cover"`), `wallhaven_query`
+(default `"abstract"`) and `search_limit` (max results per search, default `50`).
 
 ### Python Executable Path (`TUIDAL_PYTHON_PATH`)
 
@@ -216,6 +217,7 @@ cargo run
 | `Tab` | Cycle tabs (Search → Queue → Now → Spectrum → Effects → Library) |
 | `i` | Load library (on Library tab) |
 | `g` | Search playlists by musical theme (e.g. trip hop, classical) |
+| `f` | Fuzzy-filter the current list (Esc clears) |
 | `j` / `k` or `↓` / `↑` | Navigate list |
 | `1` | Quality: HiRes FLAC 24bit |
 | `2` | Quality: FLAC 16bit/44.1kHz |

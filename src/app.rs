@@ -1,5 +1,6 @@
 use crate::audio_fx::{AudioFx, FxControl, PRESETS};
 use crate::composite_bg;
+use crate::fuzzy::{self, FuzzyMatch};
 use crate::i18n::Lang;
 use crate::kitty_bg::{self, BgLayout, SpectrumBg};
 use crate::spectrum::{AnalysisBuffer, SpectrumAnalyzer};
@@ -15,6 +16,7 @@ use serde::Deserialize as DeserializeAttr;
 use serde::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +24,13 @@ pub enum InputMode {
     Normal,
     Search,
     Theme,
+    /// fzf-style local fuzzy filter on the active list.
+    Filter,
+}
+
+/// Fuzzy haystack for a track row: "title artists album".
+fn track_haystack(t: &Track) -> String {
+    format!("{} {} {}", t.title, t.artist_names(), t.album.title)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,8 +50,18 @@ pub enum CollectionView {
 }
 
 pub enum AppEvent {
-    SearchDone(Result<Vec<Track>, String>),
-    ThemeSearchDone(Result<Vec<Playlist>, String>),
+    /// Track-search result; `query` is the request text, `generation` lets
+    /// the app drop results superseded by a newer search.
+    SearchDone {
+        generation: u64,
+        query: String,
+        result: Result<Vec<Track>, String>,
+    },
+    ThemeSearchDone {
+        generation: u64,
+        query: String,
+        result: Result<Vec<Playlist>, String>,
+    },
     StreamReady {
         track: Track,
         info: StreamInfo,
@@ -260,6 +279,23 @@ pub struct App {
     pub wallhaven_query: String,
     /// Last wallpaper downloaded from wallhaven.
     pub wallhaven_image: Option<DynamicImage>,
+    /// Max number of results requested in track/playlist searches (settings).
+    pub search_limit: usize,
+    /// Live search-as-you-type: last keystroke time awaiting the debounce.
+    pub live_search_dirty_at: Option<std::time::Instant>,
+    /// A search request is currently running (daemon answers sequentially).
+    pub live_search_in_flight: bool,
+    /// Input mode that was active when the dirty flag was set.
+    pub live_search_mode: InputMode,
+    /// Bumped for each spawned search; stale results are dropped.
+    search_generation: u64,
+    /// Query text of the last accepted track-search result.
+    pub last_search_query: Option<String>,
+    /// Current fuzzy-filter text (`InputMode::Filter`).
+    pub filter_input: String,
+    /// Filtered view of the active list (indices + match positions);
+    /// `None` means no filter is applied.
+    pub filter_matches: Option<Vec<FuzzyMatch>>,
     /// Chart area written by the UI each frame (None when not on the tab).
     pub spectrum_area: Option<ratatui::layout::Rect>,
     /// Monotonic tag bumped each time a wallhaven image arrives.
@@ -316,6 +352,14 @@ impl App {
             spectrum_bg: SpectrumBg::Cover,
             wallhaven_query: "abstract".to_string(),
             wallhaven_image: None,
+            search_limit: 50,
+            live_search_dirty_at: None,
+            live_search_in_flight: false,
+            live_search_mode: InputMode::Normal,
+            search_generation: 0,
+            last_search_query: None,
+            filter_input: String::new(),
+            filter_matches: None,
             spectrum_area: None,
             wallhaven_seq: 0,
             bg_state: BgState::default(),
@@ -334,39 +378,65 @@ impl App {
 
     pub fn handle_event(&mut self, event: AppEvent) {
         match event {
-            AppEvent::SearchDone(Ok(results)) => {
-                self.status_msg = if results.is_empty() {
-                    self.lang.strings().status_no_results.to_string()
-                } else {
-                    self.lang.results_count(results.len())
-                };
-                self.search_results = results;
-                self.selected = 0;
-                self.active_tab = Tab::Search;
-                self.loading = false;
+            AppEvent::SearchDone {
+                generation,
+                query,
+                result,
+            } => {
+                if generation != self.search_generation {
+                    return;
+                }
+                self.live_search_in_flight = false;
+                match result {
+                    Ok(results) => {
+                        self.status_msg = if results.is_empty() {
+                            self.lang.strings().status_no_results.to_string()
+                        } else {
+                            self.lang.results_count(results.len())
+                        };
+                        self.last_search_query = Some(query);
+                        self.search_results = results;
+                        self.selected = 0;
+                        self.active_tab = Tab::Search;
+                        self.loading = false;
+                        self.filter_clear();
+                    }
+                    Err(e) => {
+                        self.status_msg = self.lang.search_error(&e);
+                        self.loading = false;
+                    }
+                }
             }
-            AppEvent::SearchDone(Err(e)) => {
-                self.status_msg = self.lang.search_error(&e);
-                self.loading = false;
-            }
-            AppEvent::ThemeSearchDone(Ok(playlists)) => {
-                self.status_msg = if playlists.is_empty() {
-                    self.lang.strings().status_no_results.to_string()
-                } else {
-                    self.lang
-                        .theme_results_count(playlists.len(), &self.search_input)
-                };
-                self.theme_query = Some(self.search_input.clone());
-                self.playlists = playlists;
-                self.mixes.clear();
-                self.library_selected = 0;
-                self.collection_view = CollectionView::Tracks;
-                self.active_tab = Tab::Library;
-                self.loading = false;
-            }
-            AppEvent::ThemeSearchDone(Err(e)) => {
-                self.status_msg = self.lang.search_error(&e);
-                self.loading = false;
+            AppEvent::ThemeSearchDone {
+                generation,
+                query,
+                result,
+            } => {
+                if generation != self.search_generation {
+                    return;
+                }
+                self.live_search_in_flight = false;
+                match result {
+                    Ok(playlists) => {
+                        self.status_msg = if playlists.is_empty() {
+                            self.lang.strings().status_no_results.to_string()
+                        } else {
+                            self.lang.theme_results_count(playlists.len(), &query)
+                        };
+                        self.theme_query = Some(query);
+                        self.playlists = playlists;
+                        self.mixes.clear();
+                        self.library_selected = 0;
+                        self.collection_view = CollectionView::Tracks;
+                        self.active_tab = Tab::Library;
+                        self.loading = false;
+                        self.filter_clear();
+                    }
+                    Err(e) => {
+                        self.status_msg = self.lang.search_error(&e);
+                        self.loading = false;
+                    }
+                }
             }
             AppEvent::StreamReady {
                 track,
@@ -545,6 +615,7 @@ impl App {
                 self.status_msg = self
                     .lang
                     .library_loaded(self.playlists.len(), self.mixes.len());
+                self.filter_clear();
             }
             AppEvent::PlaylistTracksLoaded(tracks) => {
                 self.queue = tracks;
@@ -553,6 +624,7 @@ impl App {
                 self.active_tab = Tab::Queue;
                 self.loading = false;
                 self.status_msg = self.lang.tracks_loaded(self.queue.len());
+                self.filter_clear();
             }
             AppEvent::FavTracksLoaded(tracks) => {
                 self.queue = tracks;
@@ -561,6 +633,7 @@ impl App {
                 self.active_tab = Tab::Queue;
                 self.loading = false;
                 self.status_msg = self.lang.fav_tracks_loaded(self.queue.len());
+                self.filter_clear();
             }
             AppEvent::FavAlbumsLoaded(albums) => {
                 self.fav_albums = albums;
@@ -569,6 +642,7 @@ impl App {
                 self.active_tab = Tab::Library;
                 self.loading = false;
                 self.status_msg = self.lang.fav_albums_loaded(self.fav_albums.len());
+                self.filter_clear();
             }
             AppEvent::ApiCmd(cmd) => match cmd {
                 ApiCommand::PlayPause => {
@@ -671,12 +745,24 @@ impl App {
         }
         self.loading = true;
         self.status_msg = self.lang.searching(&self.search_input);
+        self.search_generation += 1;
+        let generation = self.search_generation;
+        self.live_search_in_flight = true;
+        self.live_search_dirty_at = None;
         let tx = self.tx();
         let query = self.search_input.clone();
+        let limit = self.search_limit;
         let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let result = tidal.search(&query, 20).await.map_err(|e| e.to_string());
-            let _ = tx.send(AppEvent::SearchDone(result));
+            let result = tidal
+                .search(&query, limit)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::SearchDone {
+                generation,
+                query,
+                result,
+            });
         });
     }
 
@@ -692,16 +778,47 @@ impl App {
         }
         self.loading = true;
         self.status_msg = self.lang.searching_theme(&self.search_input);
+        self.search_generation += 1;
+        let generation = self.search_generation;
+        self.live_search_in_flight = true;
+        self.live_search_dirty_at = None;
         let tx = self.tx();
         let query = self.search_input.clone();
+        let limit = self.search_limit;
         let tidal = self.tidal.clone();
         tokio::spawn(async move {
             let result = tidal
-                .search_playlists(&query, 20)
+                .search_playlists(&query, limit)
                 .await
                 .map_err(|e| e.to_string());
-            let _ = tx.send(AppEvent::ThemeSearchDone(result));
+            let _ = tx.send(AppEvent::ThemeSearchDone {
+                generation,
+                query,
+                result,
+            });
         });
+    }
+
+    /// Live search-as-you-type: called from the UI tick. Fires a search for
+    /// the current `search_input` 300 ms after the last keystroke, at most
+    /// one request in flight (the Python daemon answers sequentially). When
+    /// a result arrives while the flag is dirty again, the next tick fires
+    /// the follow-up query automatically.
+    pub fn live_search_tick(&mut self) {
+        let Some(dirty) = self.live_search_dirty_at else {
+            return;
+        };
+        if dirty.elapsed() < Duration::from_millis(300) || self.live_search_in_flight {
+            return;
+        }
+        if self.search_input.chars().count() < 2 {
+            return;
+        }
+        match self.live_search_mode {
+            InputMode::Search => self.do_search_bg(),
+            InputMode::Theme => self.do_theme_search_bg(),
+            InputMode::Normal | InputMode::Filter => {}
+        }
     }
 
     pub fn add_selected_to_queue(&mut self) {
@@ -709,9 +826,12 @@ impl App {
             self.status_msg = self.lang.strings().status_login_required_short.to_string();
             return;
         }
+        let Some(idx) = self.resolve_index(self.selected) else {
+            return;
+        };
         let track = match self.active_tab {
-            Tab::Search => self.search_results.get(self.selected).cloned(),
-            Tab::Queue => self.queue.get(self.selected).cloned(),
+            Tab::Search => self.search_results.get(idx).cloned(),
+            Tab::Queue => self.queue.get(idx).cloned(),
             Tab::Now | Tab::Visualizer | Tab::Effects | Tab::Library => return,
         };
         let Some(track) = track else { return };
@@ -728,9 +848,12 @@ impl App {
             self.status_msg = self.lang.strings().status_login_required_short.to_string();
             return;
         }
+        let Some(idx) = self.resolve_index(self.selected) else {
+            return;
+        };
         let track = match self.active_tab {
-            Tab::Search => self.search_results.get(self.selected).cloned(),
-            Tab::Queue => self.queue.get(self.selected).cloned(),
+            Tab::Search => self.search_results.get(idx).cloned(),
+            Tab::Queue => self.queue.get(idx).cloned(),
             Tab::Now | Tab::Visualizer | Tab::Effects | Tab::Library => return,
         };
         let Some(track) = track else { return };
@@ -743,7 +866,7 @@ impl App {
                 .position(|t| t.id == track.id)
                 .unwrap_or(0)
         } else {
-            self.selected
+            idx
         };
         self.stream_track_bg(track, queue_index);
     }
@@ -983,19 +1106,25 @@ impl App {
 
     pub fn library_select_enter(&mut self) {
         if self.collection_view == CollectionView::Albums {
-            if let Some(album) = self.fav_albums.get(self.fav_album_selected) {
+            let Some(idx) = self.resolve_index(self.fav_album_selected) else {
+                return;
+            };
+            if let Some(album) = self.fav_albums.get(idx) {
                 let id = album.id;
                 let title = album.title.clone();
                 self.load_album_tracks_bg(id, title);
             }
             return;
         }
+        let Some(idx) = self.resolve_index(self.library_selected) else {
+            return;
+        };
         let total_playlists = self.playlists.len();
-        if self.library_selected < total_playlists {
-            let uuid = self.playlists[self.library_selected].uuid.clone();
+        if idx < total_playlists {
+            let uuid = self.playlists[idx].uuid.clone();
             self.load_playlist_tracks_bg(uuid);
         } else {
-            let mix_idx = self.library_selected - total_playlists;
+            let mix_idx = idx - total_playlists;
             if let Some(mix) = self.mixes.get(mix_idx) {
                 let mix_id = mix.id.clone();
                 self.load_mix_tracks_bg(mix_id);
@@ -1027,15 +1156,129 @@ impl App {
             }
         };
         self.selected = 0;
+        self.filter_clear();
     }
 
     pub fn current_list_len(&self) -> usize {
+        if let Some(m) = &self.filter_matches {
+            return m.len();
+        }
         match self.active_tab {
             Tab::Search => self.search_results.len(),
             Tab::Queue => self.queue.len(),
             Tab::Now | Tab::Visualizer | Tab::Effects => 0,
             Tab::Library => self.playlists.len() + self.mixes.len(),
         }
+    }
+
+    /// Items in the Library playlists+mixes view, honouring the filter.
+    pub fn library_len(&self) -> usize {
+        match &self.filter_matches {
+            Some(m) => m.len(),
+            None => self.playlists.len() + self.mixes.len(),
+        }
+    }
+
+    /// Items in the Library favourite-albums view, honouring the filter.
+    pub fn fav_albums_len(&self) -> usize {
+        match &self.filter_matches {
+            Some(m) => m.len(),
+            None => self.fav_albums.len(),
+        }
+    }
+
+    /// Move the selection down one row in the active list (wraps around).
+    pub fn selection_down(&mut self) {
+        if self.active_tab == Tab::Library {
+            if self.collection_view == CollectionView::Albums {
+                let max = self.fav_albums_len();
+                if max > 0 {
+                    self.fav_album_selected = (self.fav_album_selected + 1) % max;
+                }
+            } else {
+                let max = self.library_len();
+                if max > 0 {
+                    self.library_selected = (self.library_selected + 1) % max;
+                }
+            }
+        } else {
+            self.next_track();
+        }
+    }
+
+    /// Move the selection up one row in the active list (wraps around).
+    pub fn selection_up(&mut self) {
+        if self.active_tab == Tab::Library {
+            if self.collection_view == CollectionView::Albums {
+                let max = self.fav_albums_len();
+                if max > 0 {
+                    self.fav_album_selected = if self.fav_album_selected == 0 {
+                        max - 1
+                    } else {
+                        self.fav_album_selected - 1
+                    };
+                }
+            } else {
+                let max = self.library_len();
+                if max > 0 {
+                    self.library_selected = if self.library_selected == 0 {
+                        max - 1
+                    } else {
+                        self.library_selected - 1
+                    };
+                }
+            }
+        } else {
+            self.prev_track();
+        }
+    }
+
+    // ── Fuzzy filter (InputMode::Filter) ─────────────────────────────────
+
+    /// Rebuild the filtered view of the active list from `filter_input`.
+    pub fn filter_recompute(&mut self) {
+        let haystack: Vec<String> = match self.active_tab {
+            Tab::Search => self.search_results.iter().map(track_haystack).collect(),
+            Tab::Queue => self.queue.iter().map(track_haystack).collect(),
+            Tab::Library => match self.collection_view {
+                CollectionView::Albums => self
+                    .fav_albums
+                    .iter()
+                    .map(|a| format!("{} {}", a.title, a.artist_names()))
+                    .collect(),
+                CollectionView::Tracks => self
+                    .playlists
+                    .iter()
+                    .map(|p| p.title.clone())
+                    .chain(self.mixes.iter().map(|m| {
+                        format!("{} {}", m.title, m.sub_title.as_deref().unwrap_or(""))
+                    }))
+                    .collect(),
+            },
+            Tab::Now | Tab::Visualizer | Tab::Effects => {
+                self.filter_matches = None;
+                return;
+            }
+        };
+        self.filter_matches = Some(fuzzy::rank(
+            &self.filter_input,
+            haystack.iter().map(String::as_str),
+        ));
+        self.selected = 0;
+        self.library_selected = 0;
+        self.fav_album_selected = 0;
+    }
+
+    pub fn filter_clear(&mut self) {
+        self.filter_input.clear();
+        self.filter_matches = None;
+    }
+
+    /// Map a visible row to its index in the underlying (unfiltered) list.
+    pub fn resolve_index(&self, visible: usize) -> Option<usize> {
+        self.filter_matches
+            .as_ref()
+            .map_or(Some(visible), |m| m.get(visible).map(|x| x.index))
     }
 
     pub fn next_track(&mut self) {
@@ -1597,6 +1840,7 @@ impl App {
             audio_fx: self.audio_fx.clone(),
             spectrum_bg: self.spectrum_bg,
             wallhaven_query: self.wallhaven_query.clone(),
+            search_limit: self.search_limit,
         };
         let path = settings_path();
         if let Some(parent) = path.parent() {
@@ -1620,6 +1864,7 @@ impl App {
                 self.player.af = self.audio_fx.to_mpv_af();
                 self.spectrum_bg = settings.spectrum_bg;
                 self.wallhaven_query = settings.wallhaven_query;
+                self.search_limit = settings.search_limit;
             }
         }
     }
@@ -1651,6 +1896,8 @@ struct Settings {
     spectrum_bg: SpectrumBg,
     #[serde(default = "default_wallhaven_query")]
     wallhaven_query: String,
+    #[serde(default = "default_search_limit")]
+    search_limit: usize,
 }
 
 fn default_spectrum_bg() -> SpectrumBg {
@@ -1659,6 +1906,10 @@ fn default_spectrum_bg() -> SpectrumBg {
 
 fn default_wallhaven_query() -> String {
     "abstract".to_string()
+}
+
+fn default_search_limit() -> usize {
+    50
 }
 
 fn settings_path() -> std::path::PathBuf {

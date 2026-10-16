@@ -160,11 +160,101 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+/// Fuzzy-filter bar: `f ` prefix, query text and a right-aligned
+/// "shown/total" counter. ACCENT while typing, muted when a filter stays
+/// applied in Normal mode.
+fn draw_filter_bar(f: &mut Frame, app: &App, area: Rect, total: usize) {
+    let active = app.input_mode == InputMode::Filter;
+    let shown = app.filter_matches.as_ref().map_or(total, |m| m.len());
+    let counter = format!("{shown}/{total}");
+    // Inner width: 2 borders + 2 horizontal padding.
+    let inner_w = area.width.saturating_sub(4) as usize;
+    let left_len = 2
+        + app.filter_input.chars().count()
+        + usize::from(active)
+        + if app.filter_input.is_empty() {
+            app.lang.strings().filter_placeholder.chars().count()
+        } else {
+            0
+        };
+    let pad = inner_w.saturating_sub(left_len + counter.chars().count());
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "f ",
+                Style::default()
+                    .fg(if active { ACCENT } else { MUTED })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.filter_input.as_str(), Style::default().fg(TEXT)),
+            if active {
+                Span::styled(
+                    "▎",
+                    Style::default()
+                        .fg(ACCENT)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                )
+            } else {
+                Span::raw("")
+            },
+            if app.filter_input.is_empty() {
+                Span::styled(
+                    app.lang.strings().filter_placeholder,
+                    Style::default().fg(DIM),
+                )
+            } else {
+                Span::raw("")
+            },
+            Span::raw(" ".repeat(pad)),
+            Span::styled(counter, Style::default().fg(MUTED)),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if active { ACCENT } else { DIM }))
+                .padding(Padding::horizontal(1)),
+        ),
+        area,
+    );
+}
+
+/// Build the filtered view of `tracks` (visible order + per-item match
+/// indices) when a filter is applied.
+fn filtered_tracks(
+    app: &App,
+    tracks: &[crate::tidal::Track],
+) -> (Vec<crate::tidal::Track>, Option<Vec<Vec<u32>>>) {
+    match &app.filter_matches {
+        Some(m) => (
+            m.iter()
+                .filter_map(|x| tracks.get(x.index).cloned())
+                .collect(),
+            Some(m.iter().map(|x| x.indices.clone()).collect()),
+        ),
+        None => (tracks.to_vec(), None),
+    }
+}
+
 fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
+    let show_filter = app.input_mode == InputMode::Filter || app.filter_matches.is_some();
+    let constraints: Vec<Constraint> = if show_filter {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ]
+    } else {
+        vec![Constraint::Length(3), Constraint::Min(0)]
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .constraints(constraints)
         .split(area);
+    let list_area = *chunks.last().unwrap();
+    if show_filter {
+        draw_filter_bar(f, app, chunks[1], app.search_results.len());
+    }
 
     let is_searching = app.input_mode == InputMode::Search;
     f.render_widget(
@@ -183,6 +273,11 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
                         .fg(ACCENT)
                         .add_modifier(Modifier::SLOW_BLINK),
                 )
+            } else {
+                Span::raw("")
+            },
+            if is_searching && app.live_search_in_flight {
+                Span::styled(" ⟳", Style::default().fg(MUTED))
             } else {
                 Span::raw("")
             },
@@ -205,24 +300,39 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
         chunks[0],
     );
 
+    let (tracks, highlights) = filtered_tracks(app, &app.search_results);
     draw_track_list(
         f,
         app,
-        chunks[1],
-        &app.search_results.clone(),
+        list_area,
+        &tracks,
         app.selected,
         app.lang.strings().search_results_title,
+        highlights.as_deref(),
     );
 }
 
 fn draw_queue_tab(f: &mut Frame, app: &App, area: Rect) {
+    let show_filter = app.input_mode == InputMode::Filter || app.filter_matches.is_some();
+    let list_area = if show_filter {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(area);
+        draw_filter_bar(f, app, chunks[0], app.queue.len());
+        chunks[1]
+    } else {
+        area
+    };
+    let (tracks, highlights) = filtered_tracks(app, &app.queue);
     draw_track_list(
         f,
         app,
-        area,
-        &app.queue.clone(),
+        list_area,
+        &tracks,
         app.selected,
         app.lang.strings().queue_title,
+        highlights.as_deref(),
     );
 }
 
@@ -466,6 +576,44 @@ fn draw_lyrics(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Split `text` into spans, highlighting the char positions listed in
+/// `indices` (global haystack offsets — `base` is where `text` starts
+/// inside that haystack). Hits render GOLD + BOLD.
+fn highlight_spans(
+    text: &str,
+    indices: &[u32],
+    base: usize,
+    normal: Style,
+    hit: Style,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut run = String::new();
+    let mut run_hit = false;
+    for (i, ch) in text.chars().enumerate() {
+        let is_hit = indices.contains(&((base + i) as u32));
+        if is_hit != run_hit && !run.is_empty() {
+            spans.push(Span::styled(
+                std::mem::take(&mut run),
+                if run_hit { hit } else { normal },
+            ));
+        }
+        run_hit = is_hit;
+        run.push(ch);
+    }
+    if !run.is_empty() {
+        spans.push(Span::styled(run, if run_hit { hit } else { normal }));
+    }
+    if spans.is_empty() {
+        spans.push(Span::raw(""));
+    }
+    spans
+}
+
+/// Style for fuzzy-matched characters.
+fn hit_style() -> Style {
+    Style::default().fg(GOLD).add_modifier(Modifier::BOLD)
+}
+
 fn draw_track_list(
     f: &mut Frame,
     app: &App,
@@ -473,6 +621,7 @@ fn draw_track_list(
     tracks: &[crate::tidal::Track],
     selected: usize,
     title: &str,
+    highlights: Option<&[Vec<u32>]>,
 ) {
     let s = app.lang.strings();
     if tracks.is_empty() {
@@ -516,47 +665,84 @@ fn draw_track_list(
                 BG2
             };
 
+            let title_style = Style::default()
+                .fg(if is_now_playing { ACCENT } else { TEXT })
+                .add_modifier(if is_now_playing {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                });
+            let hl = highlights.and_then(|h| h.get(i));
+            // Haystack is "{title} {artists} {album}": map global match
+            // offsets back to each cell.
+            let title_len = t.title.chars().count();
+            let artist = t.artist_names();
+            let artist_len = artist.chars().count();
+            let title_spans = match hl {
+                Some(idx) => highlight_spans(
+                    &truncate(&t.title, 36),
+                    idx,
+                    0,
+                    title_style,
+                    hit_style(),
+                ),
+                None => vec![Span::styled(truncate(&t.title, 36), title_style)],
+            };
+            let artist_spans = match hl {
+                Some(idx) => highlight_spans(
+                    &truncate(&artist, 24),
+                    idx,
+                    title_len + 1,
+                    Style::default().fg(MUTED),
+                    hit_style(),
+                ),
+                None => vec![Span::styled(
+                    truncate(&artist, 24),
+                    Style::default().fg(MUTED),
+                )],
+            };
+            let album_spans = match hl {
+                Some(idx) => highlight_spans(
+                    &truncate(&t.album.title, 22),
+                    idx,
+                    title_len + 1 + artist_len + 1,
+                    Style::default().fg(DIM),
+                    hit_style(),
+                ),
+                None => vec![Span::styled(
+                    truncate(&t.album.title, 22),
+                    Style::default().fg(DIM),
+                )],
+            };
+
+            let mut title_line = vec![
+                if is_now_playing {
+                    Span::styled(
+                        "▶ ",
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled("  ", Style::default())
+                },
+                Span::styled(
+                    format!("{} ", t.quality_icon()),
+                    Style::default().fg(match t.audio_quality.as_deref() {
+                        Some("HI_RES_LOSSLESS") => GOLD,
+                        Some("LOSSLESS") => ACCENT,
+                        _ => MUTED,
+                    }),
+                ),
+            ];
+            title_line.extend(title_spans);
+
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("{:>3}", i + 1),
                     Style::default().fg(MUTED),
                 )),
-                Cell::from(Line::from(vec![
-                    if is_now_playing {
-                        Span::styled(
-                            "▶ ",
-                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        Span::styled("  ", Style::default())
-                    },
-                    Span::styled(
-                        format!("{} ", t.quality_icon()),
-                        Style::default().fg(match t.audio_quality.as_deref() {
-                            Some("HI_RES_LOSSLESS") => GOLD,
-                            Some("LOSSLESS") => ACCENT,
-                            _ => MUTED,
-                        }),
-                    ),
-                    Span::styled(
-                        truncate(&t.title, 36),
-                        Style::default()
-                            .fg(if is_now_playing { ACCENT } else { TEXT })
-                            .add_modifier(if is_now_playing {
-                                Modifier::BOLD
-                            } else {
-                                Modifier::empty()
-                            }),
-                    ),
-                ])),
-                Cell::from(Span::styled(
-                    truncate(&t.artist_names(), 24),
-                    Style::default().fg(MUTED),
-                )),
-                Cell::from(Span::styled(
-                    truncate(&t.album.title, 22),
-                    Style::default().fg(DIM),
-                )),
+                Cell::from(Line::from(title_line)),
+                Cell::from(Line::from(artist_spans)),
+                Cell::from(Line::from(album_spans)),
                 Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
             ])
             .style(Style::default().bg(row_bg))
@@ -748,6 +934,7 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
             hint_key("q", s.hint_quit),
             hint_key("i", s.hint_library),
             hint_key("g", s.hint_theme),
+            hint_key("f", s.hint_filter),
             hint_key("F", s.hint_fav_tracks),
             hint_key("A", s.hint_fav_albums),
             hint_key("Alt+L", s.hint_lang),
@@ -1073,6 +1260,11 @@ fn draw_theme_prompt(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 Span::raw("")
             },
+            if active && app.live_search_in_flight {
+                Span::styled(" ⟳", Style::default().fg(MUTED))
+            } else {
+                Span::raw("")
+            },
             if text.is_empty() {
                 Span::styled(
                     app.lang.strings().theme_placeholder,
@@ -1095,15 +1287,32 @@ fn draw_theme_prompt(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
     // Split off the theme prompt when typing a theme or when the list below
-    // shows the results of a previous theme search.
+    // shows the results of a previous theme search, plus the fuzzy-filter
+    // bar while a filter is active or applied.
     let show_prompt = app.input_mode == InputMode::Theme || app.theme_query.is_some();
-    let area = if show_prompt {
+    let show_filter = app.input_mode == InputMode::Filter || app.filter_matches.is_some();
+    let total_items = if app.collection_view == CollectionView::Albums {
+        app.fav_albums.len()
+    } else {
+        app.playlists.len() + app.mixes.len()
+    };
+    let bars = usize::from(show_prompt) + usize::from(show_filter);
+    let area = if bars > 0 {
+        let mut constraints = vec![Constraint::Length(3); bars];
+        constraints.push(Constraint::Min(0));
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .constraints(constraints)
             .split(area);
-        draw_theme_prompt(f, app, chunks[0]);
-        chunks[1]
+        let mut i = 0;
+        if show_prompt {
+            draw_theme_prompt(f, app, chunks[i]);
+            i += 1;
+        }
+        if show_filter {
+            draw_filter_bar(f, app, chunks[i], total_items);
+        }
+        *chunks.last().unwrap()
     } else {
         area
     };
@@ -1139,67 +1348,89 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let items: Vec<Row> = app
-        .playlists
+    // Visible rows: filtered order when a filter is applied, else 0..total.
+    let visible: Vec<(usize, Option<&Vec<u32>>)> = match &app.filter_matches {
+        Some(m) => m.iter().map(|x| (x.index, Some(&x.indices))).collect(),
+        None => (0..app.playlists.len() + app.mixes.len())
+            .map(|i| (i, None))
+            .collect(),
+    };
+
+    let items: Vec<Row> = visible
         .iter()
         .enumerate()
-        .map(|(i, p)| {
+        .map(|(i, &(idx, hl))| {
             let is_sel = i == app.library_selected;
-            Row::new(vec![
-                Cell::from(Span::styled("≡ ", Style::default().fg(ACCENT2))),
-                Cell::from(Span::styled(
-                    truncate(&p.title, 40),
-                    Style::default()
-                        .fg(if is_sel { ACCENT } else { TEXT })
-                        .add_modifier(if is_sel {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                )),
-                Cell::from(Span::styled(
-                    app.lang.tracks_count(p.number_of_tracks),
-                    Style::default().fg(MUTED),
-                )),
-                Cell::from(Span::styled("Playlist", Style::default().fg(DIM))),
-            ])
-            .style(Style::default().bg(if is_sel {
+            let row_bg = if is_sel {
                 BG3
             } else if i % 2 == 0 {
                 BG
             } else {
                 BG2
-            }))
+            };
+            if idx < app.playlists.len() {
+                let p = &app.playlists[idx];
+                let title_style = Style::default()
+                    .fg(if is_sel { ACCENT } else { TEXT })
+                    .add_modifier(if is_sel {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    });
+                // Haystack for playlists is the bare title.
+                let title_cell = match hl {
+                    Some(ix) => Cell::from(Line::from(highlight_spans(
+                        &truncate(&p.title, 40),
+                        ix,
+                        0,
+                        title_style,
+                        hit_style(),
+                    ))),
+                    None => Cell::from(Span::styled(truncate(&p.title, 40), title_style)),
+                };
+                Row::new(vec![
+                    Cell::from(Span::styled("≡ ", Style::default().fg(ACCENT2))),
+                    title_cell,
+                    Cell::from(Span::styled(
+                        app.lang.tracks_count(p.number_of_tracks),
+                        Style::default().fg(MUTED),
+                    )),
+                    Cell::from(Span::styled("Playlist", Style::default().fg(DIM))),
+                ])
+                .style(Style::default().bg(row_bg))
+            } else {
+                let m = &app.mixes[idx - app.playlists.len()];
+                let is_sel_fg = if is_sel { GOLD } else { TEXT };
+                let title_style = Style::default()
+                    .fg(is_sel_fg)
+                    .add_modifier(if is_sel {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    });
+                // Haystack for mixes is "{title} {sub_title}".
+                let title_cell = match hl {
+                    Some(ix) => Cell::from(Line::from(highlight_spans(
+                        &truncate(&m.title, 40),
+                        ix,
+                        0,
+                        title_style,
+                        hit_style(),
+                    ))),
+                    None => Cell::from(Span::styled(truncate(&m.title, 40), title_style)),
+                };
+                Row::new(vec![
+                    Cell::from(Span::styled("⊛ ", Style::default().fg(GOLD))),
+                    title_cell,
+                    Cell::from(Span::styled(
+                        m.sub_title.as_deref().unwrap_or("").to_string(),
+                        Style::default().fg(MUTED),
+                    )),
+                    Cell::from(Span::styled("Mix", Style::default().fg(GOLD))),
+                ])
+                .style(Style::default().bg(row_bg))
+            }
         })
-        .chain(app.mixes.iter().enumerate().map(|(i, m)| {
-            let idx = app.playlists.len() + i;
-            let is_sel = idx == app.library_selected;
-            Row::new(vec![
-                Cell::from(Span::styled("⊛ ", Style::default().fg(GOLD))),
-                Cell::from(Span::styled(
-                    truncate(&m.title, 40),
-                    Style::default()
-                        .fg(if is_sel { GOLD } else { TEXT })
-                        .add_modifier(if is_sel {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                )),
-                Cell::from(Span::styled(
-                    m.sub_title.as_deref().unwrap_or("").to_string(),
-                    Style::default().fg(MUTED),
-                )),
-                Cell::from(Span::styled("Mix", Style::default().fg(GOLD))),
-            ])
-            .style(Style::default().bg(if is_sel {
-                BG3
-            } else if i % 2 == 0 {
-                BG
-            } else {
-                BG2
-            }))
-        }))
         .collect();
 
     let header = Row::new(vec![
@@ -1279,28 +1510,55 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let rows: Vec<Row> = app
-        .fav_albums
+    // Visible rows: filtered order when a filter is applied, else 0..len.
+    let visible: Vec<(usize, Option<&Vec<u32>>)> = match &app.filter_matches {
+        Some(m) => m.iter().map(|x| (x.index, Some(&x.indices))).collect(),
+        None => (0..app.fav_albums.len()).map(|i| (i, None)).collect(),
+    };
+
+    let rows: Vec<Row> = visible
         .iter()
         .enumerate()
-        .map(|(i, a)| {
+        .map(|(i, &(idx, hl))| {
+            let a = &app.fav_albums[idx];
             let is_sel = i == app.fav_album_selected;
-            Row::new(vec![
-                Cell::from(Span::styled("◆ ", Style::default().fg(ACCENT))),
-                Cell::from(Span::styled(
-                    truncate(&a.title, 40),
-                    Style::default()
-                        .fg(if is_sel { ACCENT } else { TEXT })
-                        .add_modifier(if is_sel {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                )),
-                Cell::from(Span::styled(
-                    truncate(&a.artist_names(), 28),
+            let title_style = Style::default()
+                .fg(if is_sel { ACCENT } else { TEXT })
+                .add_modifier(if is_sel {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                });
+            // Haystack is "{title} {artists}".
+            let title_len = a.title.chars().count();
+            let artist = a.artist_names();
+            let title_cell = match hl {
+                Some(ix) => Cell::from(Line::from(highlight_spans(
+                    &truncate(&a.title, 40),
+                    ix,
+                    0,
+                    title_style,
+                    hit_style(),
+                ))),
+                None => Cell::from(Span::styled(truncate(&a.title, 40), title_style)),
+            };
+            let artist_cell = match hl {
+                Some(ix) => Cell::from(Line::from(highlight_spans(
+                    &truncate(&artist, 28),
+                    ix,
+                    title_len + 1,
+                    Style::default().fg(MUTED),
+                    hit_style(),
+                ))),
+                None => Cell::from(Span::styled(
+                    truncate(&artist, 28),
                     Style::default().fg(MUTED),
                 )),
+            };
+            Row::new(vec![
+                Cell::from(Span::styled("◆ ", Style::default().fg(ACCENT))),
+                title_cell,
+                artist_cell,
                 Cell::from(Span::styled(
                     app.lang.tracks_count(a.number_of_tracks),
                     Style::default().fg(DIM),

@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod audio_fx;
 mod composite_bg;
+mod fuzzy;
 mod i18n;
 mod kitty_bg;
 #[cfg(target_os = "macos")]
@@ -23,7 +24,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::{
     io,
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -247,6 +248,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 
             _ = ui_tick.tick() => {
                 app.player.tick();
+                app.live_search_tick();
                 app.update_spectrum(app.spectrum_bands_hint);
                 if let Ok(mut s) = api_status.write() {
                     *s = app.api_status_snapshot();
@@ -282,6 +284,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 InputMode::Theme => {
                                     handle_text_input(key.code, app, App::do_theme_search_bg)
                                 }
+                                InputMode::Filter => handle_filter(key, app),
                             }
                         }
                     }
@@ -338,7 +341,24 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         KeyCode::Char('g') => {
             app.input_mode = InputMode::Theme;
             app.search_input.clear();
+            // The filter indexes the previous tab's list; drop it before
+            // showing the Library.
+            app.filter_clear();
             app.active_tab = Tab::Library;
+        }
+        KeyCode::Char('f') => {
+            // Fuzzy filter only applies to list tabs.
+            if matches!(app.active_tab, Tab::Search | Tab::Queue | Tab::Library) {
+                app.input_mode = InputMode::Filter;
+                app.filter_input.clear();
+                app.filter_recompute();
+            }
+        }
+        KeyCode::Esc => {
+            // Esc closes an applied filter before anything else.
+            if app.filter_matches.is_some() {
+                app.filter_clear();
+            }
         }
         KeyCode::Char('l') | KeyCode::Char('L') => {
             if !app.authenticated {
@@ -360,48 +380,8 @@ fn handle_normal(key: KeyCode, app: &mut App) {
                 app.load_fav_albums_bg();
             }
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.active_tab == Tab::Library {
-                if app.collection_view == app::CollectionView::Albums {
-                    let max = app.fav_albums.len();
-                    if max > 0 {
-                        app.fav_album_selected = (app.fav_album_selected + 1) % max;
-                    }
-                } else {
-                    let max = app.playlists.len() + app.mixes.len();
-                    if max > 0 {
-                        app.library_selected = (app.library_selected + 1) % max;
-                    }
-                }
-            } else {
-                app.next_track();
-            }
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.active_tab == Tab::Library {
-                if app.collection_view == app::CollectionView::Albums {
-                    let max = app.fav_albums.len();
-                    if max > 0 {
-                        app.fav_album_selected = if app.fav_album_selected == 0 {
-                            max - 1
-                        } else {
-                            app.fav_album_selected - 1
-                        };
-                    }
-                } else {
-                    let max = app.playlists.len() + app.mixes.len();
-                    if max > 0 {
-                        app.library_selected = if app.library_selected == 0 {
-                            max - 1
-                        } else {
-                            app.library_selected - 1
-                        };
-                    }
-                }
-            } else {
-                app.prev_track();
-            }
-        }
+        KeyCode::Down | KeyCode::Char('j') => app.selection_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.selection_up(),
         KeyCode::Enter => {
             if app.active_tab == Tab::Library {
                 app.library_select_enter();
@@ -426,21 +406,75 @@ fn handle_normal(key: KeyCode, app: &mut App) {
 }
 
 /// Shared text-input handling for `InputMode::Search` and `InputMode::Theme`;
-/// `on_enter` is the background task to launch on Enter.
+/// `on_enter` is the background task to launch on Enter. Every edit marks the
+/// input dirty so `live_search_tick` can fire a debounced query.
 fn handle_text_input(key: KeyCode, app: &mut App, on_enter: fn(&mut App)) {
     match key {
         KeyCode::Esc => {
             app.input_mode = InputMode::Normal;
+            // Keep an in-flight request: its result is still useful.
+            app.live_search_dirty_at = None;
         }
         KeyCode::Enter => {
             app.input_mode = InputMode::Normal;
-            on_enter(app);
+            // Skip the query only when the shown input was already searched
+            // (no pending edits and the last accepted result matches it).
+            let stale = app.live_search_dirty_at.is_some()
+                || match app.live_search_mode {
+                    InputMode::Search => {
+                        app.last_search_query.as_deref() != Some(app.search_input.as_str())
+                    }
+                    InputMode::Theme => {
+                        app.theme_query.as_deref() != Some(app.search_input.as_str())
+                    }
+                    _ => true,
+                };
+            if stale {
+                on_enter(app);
+            }
         }
         KeyCode::Backspace => {
             app.search_input.pop();
+            app.live_search_dirty_at = Some(Instant::now());
+            app.live_search_mode = app.input_mode.clone();
         }
         KeyCode::Char(c) => {
             app.search_input.push(c);
+            app.live_search_dirty_at = Some(Instant::now());
+            app.live_search_mode = app.input_mode.clone();
+        }
+        _ => {}
+    }
+}
+
+/// Input handling while `InputMode::Filter` is active: edits recompute the
+/// fuzzy match, arrows/Ctrl-j/Ctrl-k move the selection, Enter performs the
+/// tab's default action and keeps the filter applied, Esc cancels it.
+fn handle_filter(key: event::KeyEvent, app: &mut App) {
+    match key.code {
+        KeyCode::Esc => {
+            app.input_mode = InputMode::Normal;
+            app.filter_clear();
+        }
+        KeyCode::Enter => {
+            app.input_mode = InputMode::Normal;
+            if app.active_tab == Tab::Library {
+                app.library_select_enter();
+            } else {
+                app.play_selected_bg();
+            }
+        }
+        KeyCode::Down => app.selection_down(),
+        KeyCode::Up => app.selection_up(),
+        KeyCode::Char('j') if key.modifiers == KeyModifiers::CONTROL => app.selection_down(),
+        KeyCode::Char('k') if key.modifiers == KeyModifiers::CONTROL => app.selection_up(),
+        KeyCode::Backspace => {
+            app.filter_input.pop();
+            app.filter_recompute();
+        }
+        KeyCode::Char(c) => {
+            app.filter_input.push(c);
+            app.filter_recompute();
         }
         _ => {}
     }
