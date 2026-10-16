@@ -29,9 +29,41 @@ import sys
 import threading
 from pathlib import Path
 from tidalapi.user import ItemOrder, AlbumOrder, OrderDirection
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import tidalapi
 
 SESSION_FILE = Path.home() / ".config" / "tidal-tui" / "tidalapi_session.json"
+
+# Errors raised when a pooled keep-alive connection was closed by the server
+# (or a NAT) while a track was playing: the next request hits a dead socket.
+TRANSIENT_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+
+
+def mount_retries(session: tidalapi.Session):
+    """Retry idempotent requests on dropped connections and 5xx gateway errors."""
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=2,
+        status=2,
+        backoff_factor=0.5,
+        status_forcelist=(502, 503, 504),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.request_session.mount("https://", adapter)
+    session.request_session.mount("http://", adapter)
+
+
+def call_with_reconnect(session: tidalapi.Session, fn):
+    """Run fn(); if the keep-alive connection was reset, drop the pool and retry once."""
+    try:
+        return fn()
+    except TRANSIENT_ERRORS:
+        session.request_session.close()
+        return fn()
 
 
 def load_env_file() -> dict:
@@ -103,6 +135,7 @@ def make_session(quality=None, use_env=True) -> tidalapi.Session:
         # tidalapi falls back to client_id when no secret is provided
         config.client_secret = client_secret or client_id
     session = tidalapi.Session(config)
+    mount_retries(session)
     # Remember which credentials this session was created with: a token issued
     # for one client_id cannot be refreshed by another.
     session.uses_env_credentials = bool(use_env and client_id)
@@ -364,13 +397,15 @@ def run_daemon():
                 out({"id": req_id, "result": {"ok": True}})
 
             elif method in HANDLERS:
-                if not session.check_login():
+                if not call_with_reconnect(session, session.check_login):
                     out({"id": req_id, "error": "Non authentifié"})
                     continue
                 handler = HANDLERS[method]
                 if method == "stream" and "quality" not in params:
                     params["quality"] = quality
-                result = handler(session, **params)
+                result = call_with_reconnect(
+                    session, lambda: handler(session, **params)
+                )
                 out({"id": req_id, "result": result})
 
             else:
