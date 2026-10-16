@@ -54,6 +54,7 @@ pub struct Strings {
     pub hint_filter: &'static str,
     pub hint_panes: &'static str,
     pub hint_layout: &'static str,
+    pub hint_radio: &'static str,
     pub hint_fav_tracks: &'static str,
     pub hint_fav_albums: &'static str,
     pub hint_lang: &'static str,
@@ -77,6 +78,7 @@ pub struct Strings {
     pub login_overlay_title: &'static str,
     // Status messages (static)
     pub status_no_results: &'static str,
+    pub status_no_radio_seed: &'static str,
     pub status_auth_done: &'static str,
     pub status_login_required: &'static str,
     pub status_login_required_short: &'static str,
@@ -157,6 +159,7 @@ static FR: Strings = Strings {
     hint_filter: "filtrer",
     hint_panes: "volets",
     hint_layout: "disposition",
+    hint_radio: "radio piste/artiste",
     hint_fav_tracks: "titres fav",
     hint_fav_albums: "albums fav",
     hint_lang: "langue",
@@ -176,6 +179,7 @@ static FR: Strings = Strings {
     login_waiting: "  En attente d'autorisation...",
     login_overlay_title: " ◈ Authentification ",
     status_no_results: "Aucun résultat",
+    status_no_radio_seed: "Aucun morceau sélectionné pour la radio",
     status_auth_done: "✓ Authentifié auprès de Tidal",
     status_login_required: "Connectez-vous d'abord avec 'L'",
     status_login_required_short: "Connectez-vous d'abord (L)",
@@ -253,6 +257,7 @@ static EN: Strings = Strings {
     hint_filter: "filter",
     hint_panes: "panes",
     hint_layout: "layout",
+    hint_radio: "track/artist radio",
     hint_fav_tracks: "fav tracks",
     hint_fav_albums: "fav albums",
     hint_lang: "language",
@@ -272,6 +277,7 @@ static EN: Strings = Strings {
     login_waiting: "  Waiting for authorization...",
     login_overlay_title: " ◈ Authentication ",
     status_no_results: "No results",
+    status_no_radio_seed: "No track selected for the radio",
     status_auth_done: "✓ Authenticated with Tidal",
     status_login_required: "Log in first with 'L'",
     status_login_required_short: "Log in first (L)",
@@ -349,6 +355,7 @@ static DE: Strings = Strings {
     hint_filter: "filtern",
     hint_panes: "Bereiche",
     hint_layout: "Layout",
+    hint_radio: "Titel-/Künstler-Radio",
     hint_fav_tracks: "Fav-Titel",
     hint_fav_albums: "Fav-Alben",
     hint_lang: "Sprache",
@@ -368,6 +375,7 @@ static DE: Strings = Strings {
     login_waiting: "  Warte auf Autorisierung...",
     login_overlay_title: " ◈ Authentifizierung ",
     status_no_results: "Keine Ergebnisse",
+    status_no_radio_seed: "Kein Titel für das Radio ausgewählt",
     status_auth_done: "✓ Bei Tidal authentifiziert",
     status_login_required: "Zuerst mit 'L' anmelden",
     status_login_required_short: "Zuerst anmelden (L)",
@@ -445,6 +453,7 @@ static RO: Strings = Strings {
     hint_filter: "filtrează",
     hint_panes: "panouri",
     hint_layout: "aspect",
+    hint_radio: "radio piesă/artist",
     hint_fav_tracks: "piese fav",
     hint_fav_albums: "albume fav",
     hint_lang: "limbă",
@@ -464,6 +473,7 @@ static RO: Strings = Strings {
     login_waiting: "  Se așteaptă autorizarea...",
     login_overlay_title: " ◈ Autentificare ",
     status_no_results: "Niciun rezultat",
+    status_no_radio_seed: "Niciun titlu selectat pentru radio",
     status_auth_done: "✓ Autentificat în Tidal",
     status_login_required: "Autentifică-te mai întâi cu 'L'",
     status_login_required_short: "Autentifică-te mai întâi (L)",
@@ -568,6 +578,33 @@ impl Lang {
             Lang::En => format!("Searching \"{q}\"..."),
             Lang::De => format!("Suche \"{q}\"..."),
             Lang::Ro => format!("Se caută \"{q}\"..."),
+        }
+    }
+
+    pub fn radio_loading(self, name: &str) -> String {
+        match self {
+            Lang::Fr => format!("⟳ Radio « {name} »..."),
+            Lang::En => format!("⟳ Radio “{name}”..."),
+            Lang::De => format!("⟳ Radio „{name}“..."),
+            Lang::Ro => format!("⟳ Radio „{name}”..."),
+        }
+    }
+
+    pub fn radio_started(self, title: &str, n: usize) -> String {
+        match self {
+            Lang::Fr => format!("📻 Radio « {title} » : {n} pistes"),
+            Lang::En => format!("📻 Radio “{title}”: {n} tracks"),
+            Lang::De => format!("📻 Radio „{title}“: {n} Titel"),
+            Lang::Ro => format!("📻 Radio „{title}”: {n} piese"),
+        }
+    }
+
+    pub fn radio_error(self, e: &str) -> String {
+        match self {
+            Lang::Fr => format!("✗ Radio : {e}"),
+            Lang::En => format!("✗ Radio: {e}"),
+            Lang::De => format!("✗ Radio: {e}"),
+            Lang::Ro => format!("✗ Radio: {e}"),
         }
     }
 

@@ -270,6 +270,8 @@ pub fn run_probe() -> Result<()> {
                     ApiCommand::Stop => "Stop",
                     ApiCommand::Seek(_) => "Seek",
                     ApiCommand::SetPosition(_) => "SetPosition",
+                    ApiCommand::TrackRadio => "TrackRadio",
+                    ApiCommand::ArtistRadio => "ArtistRadio",
                 };
                 eprintln!("probe: media command -> {name}");
             }

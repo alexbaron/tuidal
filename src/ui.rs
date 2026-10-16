@@ -1064,6 +1064,7 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
             hint_key("f", s.hint_filter),
             hint_key("h/l", s.hint_panes),
             hint_key("S", s.hint_layout),
+            hint_key("r/R", s.hint_radio),
             hint_key("F", s.hint_fav_tracks),
             hint_key("A", s.hint_fav_albums),
             hint_key("Alt+L", s.hint_lang),

@@ -41,6 +41,8 @@ pub async fn start_server(
         .route("/shuffle", post(handle_shuffle))
         .route("/repeat", post(handle_repeat))
         .route("/play-track", post(handle_play_track))
+        .route("/track-radio", post(handle_track_radio))
+        .route("/artist-radio", post(handle_artist_radio))
         .route("/just-play", post(handle_just_play))
         .route("/queue", get(handle_queue))
         .route("/search", get(handle_search))
@@ -81,6 +83,12 @@ async fn handle_play_pause(State(s): State<ApiState>) -> StatusCode {
 }
 async fn handle_next(State(s): State<ApiState>) -> StatusCode {
     send_cmd(&s, ApiCommand::Next)
+}
+async fn handle_track_radio(State(s): State<ApiState>) -> StatusCode {
+    send_cmd(&s, ApiCommand::TrackRadio)
+}
+async fn handle_artist_radio(State(s): State<ApiState>) -> StatusCode {
+    send_cmd(&s, ApiCommand::ArtistRadio)
 }
 async fn handle_previous(State(s): State<ApiState>) -> StatusCode {
     send_cmd(&s, ApiCommand::Prev)

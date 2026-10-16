@@ -382,6 +382,8 @@ fn handle_normal(key: KeyCode, app: &mut App) {
             }
         }
         KeyCode::Char('S') => app.cycle_layout(),
+        KeyCode::Char('r') => app.start_track_radio_bg(),
+        KeyCode::Char('R') => app.start_artist_radio_bg(),
         KeyCode::Char('i') => {
             if app.authenticated {
                 app.load_library_bg();

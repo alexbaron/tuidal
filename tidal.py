@@ -11,6 +11,8 @@ Modes :
   python3 tidal.py cover 12345
   python3 tidal.py playlists
   python3 tidal.py playlist_tracks <uuid>
+  python3 tidal.py track_radio <id>
+  python3 tidal.py artist_radio <id>
   python3 tidal.py mixes
   python3 tidal.py mix_tracks <id>
   python3 tidal.py fav_tracks
@@ -292,6 +294,16 @@ def handle_playlist_tracks(session, uuid):
     return [_track_dict(t) for t in tracks]
 
 
+def handle_track_radio(session, track_id, limit=50):
+    tracks = session.track(track_id).get_track_radio(limit=limit)
+    return [_track_dict(t) for t in tracks if isinstance(t, tidalapi.Track)]
+
+
+def handle_artist_radio(session, artist_id, limit=50):
+    tracks = session.artist(artist_id).get_radio(limit=limit)
+    return [_track_dict(t) for t in tracks if isinstance(t, tidalapi.Track)]
+
+
 def handle_mixes(session):
     mixes = session.mixes()
     result = []
@@ -347,6 +359,8 @@ HANDLERS = {
     "lyrics":         handle_lyrics,
     "playlists":      handle_playlists,
     "search_playlists": handle_search_playlists,
+    "track_radio":    handle_track_radio,
+    "artist_radio":   handle_artist_radio,
     "playlist_tracks": handle_playlist_tracks,
     "mixes":          handle_mixes,
     "mix_tracks":     handle_mix_tracks,
@@ -567,6 +581,28 @@ def cli_lyrics(track_id):
         out({"error": str(e)})
 
 
+def cli_track_radio(track_id):
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
+        return
+    try:
+        out(handle_track_radio(session, track_id))
+    except Exception as e:
+        out({"error": str(e)})
+
+
+def cli_artist_radio(artist_id):
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
+        return
+    try:
+        out(handle_artist_radio(session, artist_id))
+    except Exception as e:
+        out({"error": str(e)})
+
+
 def cli_album_tracks(album_id):
     session = open_session()
     if not session.check_login():
@@ -602,6 +638,10 @@ if __name__ == "__main__":
             cli_search(query, int(limit))
         case ["search_playlists", query]:
             cli_search_playlists(query)
+        case ["track_radio", track_id]:
+            cli_track_radio(int(track_id))
+        case ["artist_radio", artist_id]:
+            cli_artist_radio(int(artist_id))
         case ["stream", track_id]:
             cli_stream(int(track_id))
         case ["stream", track_id, quality]:

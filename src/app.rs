@@ -108,6 +108,8 @@ pub enum AppEvent {
         mixes: Vec<Mix>,
     },
     PlaylistTracksLoaded(Vec<Track>),
+    RadioLoaded { title: String, tracks: Vec<Track> },
+    RadioError(String),
     FavTracksLoaded(Vec<Track>),
     FavAlbumsLoaded(Vec<FavAlbum>),
     ApiCmd(ApiCommand),
@@ -179,6 +181,8 @@ pub enum ApiCommand {
     SeekForward,
     SeekBackward,
     PlayTrack(ApiTrack),
+    TrackRadio,
+    ArtistRadio,
     ToggleShuffle,
     CycleRepeat,
     Stop,
@@ -658,6 +662,28 @@ impl App {
                 self.filter_clear();
                 self.clamp_selections();
             }
+            AppEvent::RadioLoaded { title, tracks } => {
+                if tracks.is_empty() {
+                    self.status_msg = self.lang.strings().status_no_results.to_string();
+                    self.loading = false;
+                } else {
+                    self.queue = tracks;
+                    self.queue_index = None;
+                    self.queue_selected = 0;
+                    self.filter_clear();
+                    self.clamp_selections();
+                    self.active_tab = Tab::Queue;
+                    self.loading = false;
+                    self.status_msg = self.lang.radio_started(&title, self.queue.len());
+                    if let Some(t0) = self.queue.first().cloned() {
+                        self.stream_track_bg(t0, 0);
+                    }
+                }
+            }
+            AppEvent::RadioError(e) => {
+                self.status_msg = self.lang.radio_error(&e);
+                self.loading = false;
+            }
             AppEvent::FavTracksLoaded(tracks) => {
                 self.queue = tracks;
                 self.queue_index = None;
@@ -724,6 +750,12 @@ impl App {
                             RepeatMode::Off => "off",
                         }
                     );
+                }
+                ApiCommand::TrackRadio => {
+                    self.start_track_radio_bg();
+                }
+                ApiCommand::ArtistRadio => {
+                    self.start_artist_radio_bg();
                 }
                 ApiCommand::Stop => {
                     self.player.stop();
@@ -852,6 +884,82 @@ impl App {
             InputMode::Theme => self.do_theme_search_bg(),
             InputMode::Normal | InputMode::Filter => {}
         }
+    }
+
+    /// Track used as radio seed: the one under the cursor on Search/Queue,
+    /// else the currently playing track.
+    fn radio_seed(&self) -> Option<Track> {
+        match self.active_tab {
+            Tab::Search => self
+                .resolve_index(self.selected())
+                .and_then(|i| self.search_results.get(i).cloned()),
+            Tab::Queue => self
+                .resolve_index(self.selected())
+                .and_then(|i| self.queue.get(i).cloned()),
+            _ => self
+                .queue_index
+                .and_then(|i| self.queue.get(i).cloned()),
+        }
+    }
+
+    /// Start a Tidal radio station from the seed track (`r`).
+    pub fn start_track_radio_bg(&mut self) {
+        if !self.authenticated {
+            self.status_msg = self.lang.strings().status_login_required_short.to_string();
+            return;
+        }
+        let Some(track) = self.radio_seed() else {
+            self.status_msg = self.lang.strings().status_no_radio_seed.to_string();
+            return;
+        };
+        let name = track.title.clone();
+        self.loading = true;
+        self.status_msg = self.lang.radio_loading(&name);
+        let tx = self.tx();
+        let limit = self.search_limit.max(50);
+        let tidal = self.tidal.clone();
+        tokio::spawn(async move {
+            match tidal.get_track_radio(track.id, limit).await {
+                Ok(tracks) => {
+                    let _ = tx.send(AppEvent::RadioLoaded { title: name, tracks });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::RadioError(e.to_string()));
+                }
+            }
+        });
+    }
+
+    /// Start a Tidal radio station from the seed track's main artist (`R`).
+    pub fn start_artist_radio_bg(&mut self) {
+        if !self.authenticated {
+            self.status_msg = self.lang.strings().status_login_required_short.to_string();
+            return;
+        }
+        let Some(track) = self.radio_seed() else {
+            self.status_msg = self.lang.strings().status_no_radio_seed.to_string();
+            return;
+        };
+        let Some(artist) = track.artists.first() else {
+            self.status_msg = self.lang.strings().status_no_radio_seed.to_string();
+            return;
+        };
+        let (artist_id, name) = (artist.id, artist.name.clone());
+        self.loading = true;
+        self.status_msg = self.lang.radio_loading(&name);
+        let tx = self.tx();
+        let limit = self.search_limit.max(50);
+        let tidal = self.tidal.clone();
+        tokio::spawn(async move {
+            match tidal.get_artist_radio(artist_id, limit).await {
+                Ok(tracks) => {
+                    let _ = tx.send(AppEvent::RadioLoaded { title: name, tracks });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::RadioError(e.to_string()));
+                }
+            }
+        });
     }
 
     pub fn add_selected_to_queue(&mut self) {
