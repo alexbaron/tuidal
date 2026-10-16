@@ -811,7 +811,7 @@ impl App {
         if dirty.elapsed() < Duration::from_millis(300) || self.live_search_in_flight {
             return;
         }
-        if self.search_input.chars().count() < 2 {
+        if self.search_input.chars().count() < 3 {
             return;
         }
         match self.live_search_mode {
