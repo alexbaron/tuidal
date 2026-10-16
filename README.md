@@ -1,13 +1,15 @@
-
 Fork of the original Tuidal for personal purpose.
-- french interface
-- add some cool features
-- [x] new tab spectre
+- french interface (FR / EN / DE / RO)
+- add some cool features — see the [Feature guide](#feature-guide)
+- [x] new tab spectre (cava engine, bars or curve)
 <img width="1031" height="513" alt="image" src="https://github.com/user-attachments/assets/0a64bbff-e7cf-4f93-8ab9-7d1601e9f386" />
 - [x] preset / balance / ... based on mpv
 <img width="873" height="643" alt="image" src="https://github.com/user-attachments/assets/864baf19-547a-49ff-95d4-7f88e9009076" />
 - [x] Add background image behind the spectrum (kitty)
 <img width="1271" height="829" alt="image" src="https://github.com/user-attachments/assets/079f0484-96b4-412b-aa71-14290e3f428b" />
+- [x] split view (search | queue), live search, fuzzy filter, theme search
+- [x] track / artist radio, playlist export (files, Tidal, HTTP upload)
+- [x] system media controls (MPRIS on Linux, Now Playing on macOS)
 # Tuidal
 
 A terminal music player for Tidal, built with Rust and ratatui. Streams lossless audio directly in your terminal with album art support via the Kitty, Sixel or iTerm2 graphics protocols.
@@ -157,12 +159,26 @@ tuidal detects `.venv/` automatically; see [Python environment](#python-environm
 
 ### Settings (`~/.config/tuidal/settings.json`)
 
-Persisted keys include `lang`, `quality`, `volume`, `audio_fx`, `spectrum_bg`
-(`"none"` | `"cover"` | `"wallhaven"`, default `"cover"`), `spectrum_style`
-(`"bars"` | `"curve"`, default `"bars"`), `wallhaven_query`
-(default `"abstract"`) and `search_limit` (max results per search, default `50`).
-`export_dir` overrides the export directory (default: `$TUIDAL_EXPORT_DIR`, else `~/Music/tuidal`, else `~/.config/tuidal/exports`).
-`export_upload_url`, `export_upload_format` (`"json"` default, or `"csv"`/`"m3u8"`) and `export_upload_token` configure the `u` upload destination — each can also be set via the env vars `TUIDAL_EXPORT_UPLOAD_URL`, `TUIDAL_EXPORT_UPLOAD_FORMAT`, `TUIDAL_EXPORT_UPLOAD_TOKEN` (env wins). The request is `POST <url>` with the rendered export as the body, `Content-Type` `application/json` / `text/csv; charset=utf-8` / `audio/x-mpegurl; charset=utf-8`, headers `X-Tuidal-Title`, `X-Tuidal-Format`, and `Authorization: Bearer <token>` when a token is set; the token is never displayed. `layout` selects the main view: `"split"` (default, side-by-side Search/Queue panes, automatically falls back to tabs under 100 columns) or `"tabs"`.
+Written automatically whenever a persisted value changes; every key is optional.
+
+| Key | Values | Default | Notes |
+|-----|--------|---------|-------|
+| `lang` | `fr` / `en` / `de` / `ro` | `fr` | `Alt+L` cycles |
+| `quality` | `HI_RES_LOSSLESS` / `LOSSLESS` / `HIGH` | `LOSSLESS` | keys `1` / `2` / `3` |
+| `volume` | 0–100 | 85 | |
+| `audio_fx` | object | neutral | Effects tab state |
+| `layout` | `split` / `tabs` | `split` | `S` toggles; split needs ≥ 100 columns |
+| `search_limit` | integer | 50 | max results per track/theme search; radio uses at least 50 |
+| `spectrum_style` | `bars` / `curve` | `bars` | `v` toggles |
+| `spectrum_bg` | `none` / `cover` / `wallhaven` | `cover` | `b` cycles |
+| `wallhaven_query` | string | `abstract` | wallhaven.cc search used by `B` |
+| `export_dir` | path | unset | see [Playlist export](#playlist-export) |
+| `export_upload_url` | URL | unset | enables the `u` export destination |
+| `export_upload_format` | `json` / `csv` / `m3u8` | `json` | body format of the upload |
+| `export_upload_token` | string | unset | sent as `Authorization: Bearer`; never displayed |
+
+Environment variables override their settings counterpart: `TUIDAL_EXPORT_DIR`,
+`TUIDAL_EXPORT_UPLOAD_URL`, `TUIDAL_EXPORT_UPLOAD_FORMAT`, `TUIDAL_EXPORT_UPLOAD_TOKEN`.
 
 ### Python Executable Path (`TUIDAL_PYTHON_PATH`)
 
@@ -290,17 +306,187 @@ gravity falloff and noise reduction.
 
 ---
 
+## Feature guide
+
+### Split view (search | queue)
+
+On terminals at least 100 columns wide, the *Search* and *Queue* tabs share the
+body: results on the left (60 %), queue on the right (40 %). Each pane keeps its
+own selection, so looking up a track never loses your place in the queue.
+
+- The focused pane has an accent border and title; the other pane stays dimmed
+  with its selected row still highlighted.
+- `h` focuses the search pane, `l` the queue pane; `Tab` keeps cycling through
+  all tabs as before (which also moves the focus left → right).
+- `Enter`, `a`, `f`, `r`/`R` and `e` act on the focused pane. `Enter` on a result
+  appends it to the queue and plays it — it shows up on the right with ▶.
+- The queue title shows the count and total duration, e.g. `Queue (12 · 48:12)`.
+- `S` switches to the classic one-tab layout (persisted as `layout`); narrower
+  terminals fall back to tabs automatically.
+
+### Live search and fuzzy filter
+
+- **Search as you type** (`/`): the query is sent 300 ms after the last keystroke
+  once it has at least 3 characters. Only one request is in flight at a time and
+  superseded replies are dropped, so the list always matches the latest text.
+  `Enter` re-runs the search only if the text changed; `Esc` closes the prompt
+  without discarding a reply in flight. A `⟳` next to the cursor means a request
+  is running.
+- **Fuzzy filter** (`f`): fzf-style, instant, local to the focused list (search
+  results, queue, playlists/mixes, favourite albums). Matching is powered by
+  [nucleo-matcher](https://github.com/helix-editor/nucleo) (the Helix matcher):
+  case-insensitive, scattered characters allowed (`mss atk` finds *Massive
+  Attack*), results sorted by score with matched characters highlighted. The bar
+  shows `shown/total`. `↑`/`↓` or `Ctrl-j`/`Ctrl-k` move inside the filtered
+  list, `Enter` performs the usual action and keeps the filter, `Esc` clears it
+  (also from normal mode).
+- `search_limit` (default 50) caps the number of remote results.
+
+### Theme search
+
+`g` opens a *theme* prompt (`trip hop`, `classical`, `lofi jazz`…). Tidal's own
+genre endpoint only exposes ~20 coarse genres, so tuidal instead searches
+editorial playlists by free text, which matches moods and sub-genres very well
+(*Trip Hop Treats*, *Massive Attack Essentials*, *Classical Focus*…). Results
+land on the Library tab under the title `Playlists: <theme>`; `Enter` loads a
+playlist into the queue. `i` reloads your own library and leaves theme mode.
+Live search applies to the theme prompt too.
+
+### Track and artist radio
+
+Tidal's native stations, straight from the keyboard:
+
+- `r` starts a radio from the track under the cursor (search or queue pane) or,
+  from any other tab, from the track currently playing.
+- `R` starts a radio from that track's main artist (except on the Effects tab,
+  where `R` resets the effects).
+
+The station (50 tracks, or `search_limit` if larger) **replaces the queue** and
+playback starts on its first track. Also available on the HTTP API:
+`POST /track-radio`, `POST /artist-radio`.
+
+### Playlist export
+
+`e` opens the export popup for the **queue** or, on the Library tab, for the
+**selected playlist / mix / favourite album** (its tracks are fetched first).
+Destinations:
+
+| Key | Destination | Details |
+|-----|-------------|---------|
+| `1` / `m` | M3U8 file | `#EXTM3U` + `#EXTINF` lines with `https://tidal.com/browse/track/<id>` web links |
+| `2` / `c` | CSV file | `position,title,artists,album,duration_seconds,isrc,tidal_id,url`, RFC 4180 quoting |
+| `3` / `j` | JSON file | full metadata (`title`, `exported_at`, `tracks[]` with artists, album, ISRC, url) |
+| `4` / `t` | Tidal playlist | creates `<title> (tuidal)` (or `tuidal queue <timestamp>`) in your Tidal library and adds the tracks |
+| `5` / `u` | HTTP upload | `POST` of the rendered export to `export_upload_url` (shown only when configured) |
+
+Files are named `<slug>-<YYYYMMDD-HHMMSS>.<ext>` and written to `export_dir`,
+else `$TUIDAL_EXPORT_DIR`, else `~/Music/tuidal`, else `~/.config/tuidal/exports`.
+Exports contain **metadata and Tidal web links only** — never stream URLs or
+audio. The ISRC comes from Tidal and makes re-import into other services easy.
+
+Upload request shape, for writing a receiver:
+
+```
+POST <export_upload_url>
+Content-Type: application/json | text/csv; charset=utf-8 | audio/x-mpegurl; charset=utf-8
+X-Tuidal-Title: <playlist title>
+X-Tuidal-Format: json | csv | m3u8
+Authorization: Bearer <export_upload_token>      (only when a token is set)
+
+<rendered export>
+```
+
+Any 2xx reply is a success (`✓ Uploaded to <host> (HTTP 201)`); the timeout is 15 s.
+
+### System media controls
+
+- **Linux — MPRIS** (`org.mpris.MediaPlayer2.tuidal`): play/pause, next,
+  previous, stop, seek, volume, shuffle/loop status and metadata including the
+  cover (`mpris:artUrl`). Works with `playerctl`, GNOME Shell, KDE, polybar,
+  waybar, etc.
+- **macOS — Now Playing / media keys / Control Center** via
+  `MPRemoteCommandCenter`: the keyboard media keys, the Control Center widget
+  and AirPods controls drive tuidal, and the track, artist, album and cover are
+  shown in Now Playing. tuidal registers as a regular app (a Dock icon appears
+  while it runs); mpv is started with `--input-media-keys=no` so it does not
+  compete for the keys. A hidden `tuidal --media-probe` flag registers a fake
+  session for 60 s and prints every received command — handy to check the
+  wiring.
+
+### Local HTTP API
+
+tuidal listens on `http://127.0.0.1:7837` (loopback only) so scripts, status
+bars and hotkey daemons can drive it:
+
+| Method | Route | Effect |
+|--------|-------|--------|
+| GET | `/status` | state, track, position, volume, shuffle/repeat, queue |
+| POST | `/play-pause`, `/next`, `/previous` | transport |
+| POST | `/seek-forward`, `/seek-backward` | ±10 s |
+| POST | `/volume-up`, `/volume-down`, `/volume?level=<0-100>` | volume |
+| POST | `/shuffle`, `/repeat` | toggle shuffle / cycle repeat |
+| POST | `/track-radio`, `/artist-radio` | start a radio from the selected/playing track |
+| POST | `/play-track` (JSON body `{id,title,artist,album,duration}`) | play a given track |
+| POST | `/just-play?q=<text>` | search and play the first match |
+| GET | `/search?q=<text>&limit=<n>` | track search |
+| GET | `/queue`, `/library`, `/library/favorites`, `/library/favorite-albums` | lists |
+| GET | `/library/playlist/{uuid}`, `/library/mix/{id}`, `/library/album/{id}` | tracks of an item |
+
+```bash
+curl -X POST localhost:7837/play-pause
+curl -X POST 'localhost:7837/just-play?q=teardrop massive attack'
+curl localhost:7837/status | jq .title
+```
+
+### Spectrum tab
+
+The analyser is a Rust port of [cava](https://github.com/karlstav/cava)'s
+cavacore (MIT, © Karl Stavestrand): two FFT resolutions (bass / mid-treble),
+logarithmic band distribution, auto-sensitivity, gravity fall-off and integral
+smoothing, fed by a second download of the stream decoded with symphonia and
+kept in sync with mpv's playback position.
+
+- `v` toggles **bars** (default: eighth-block glyphs, three-colour gradient,
+  decaying peak markers) and **curve** (Braille line chart).
+- `b` cycles the background: none, the album cover, or a random wallhaven.cc
+  wallpaper (`B` fetches a new one). On kitty the image sits under the text; on
+  Sixel/iTerm2 the bars/curve are drawn into the image itself.
+- `TUIDAL_BG_DEBUG=1` traces the engine state (bar count, sensitivity, fps,
+  samples fed) and the background pipeline to `/tmp/tuidal-bg.log`.
+
+### Robustness and performance
+
+- Dropped keep-alive connections (`Connection reset by peer` after a long idle
+  while a track plays) are retried transparently: every tidalapi session gets a
+  `urllib3` retry policy and the daemon flushes its connection pool and retries
+  once on a reset.
+- The Python daemon serves API calls on a small thread pool: replies are matched
+  by request id, so a slow search never delays the next track's stream URL.
+
+---
+
 ## Project Structure
 
 ```
 tuidal/
 ├── src/
-│   ├── main.rs       # Entry point, event loop
-│   ├── app.rs        # Application state and background tasks
-│   ├── ui.rs         # Terminal UI rendering (ratatui)
-│   ├── tidal.rs      # Rust client — calls tidal.py as subprocess
-│   └── player.rs     # mpv subprocess wrapper
-├── tidal.py          # Python bridge to tidalapi
+│   ├── main.rs          # Entry point, key handling, event loop (macOS: AppKit loop on the main thread)
+│   ├── app.rs           # Application state, background tasks, settings
+│   ├── ui.rs            # Terminal UI rendering (ratatui): split view, lists, popups, spectrum
+│   ├── tidal.rs         # Rust client for the Python daemon (JSON-RPC over stdin/stdout)
+│   ├── player.rs        # mpv subprocess wrapper (IPC socket)
+│   ├── api.rs           # Local HTTP API (axum)
+│   ├── mpris.rs         # MPRIS D-Bus server (Linux)
+│   ├── media_macos.rs   # Now Playing / media keys (macOS, souvlaki)
+│   ├── fuzzy.rs         # fzf-style matcher (nucleo-matcher)
+│   ├── export.rs        # M3U8 / CSV / JSON rendering, file write, HTTP upload
+│   ├── spectrum.rs      # Stream re-download + decoding, streaming adapter over cavacore
+│   ├── cavacore.rs      # Port of cava's cavacore (MIT)
+│   ├── composite_bg.rs  # Pixel rendering of the spectrum into the background (Sixel/iTerm2)
+│   ├── kitty_bg.rs      # kitty graphics protocol background placement
+│   ├── audio_fx.rs      # Equalizer / effects model → mpv filter chain
+│   └── i18n.rs          # UI strings (FR, EN, DE, RO)
+├── tidal.py             # Python daemon bridging to tidalapi
 └── Cargo.toml
 ```
 
@@ -326,13 +512,27 @@ Rust TUI  ──subprocess──►  tidal.py  ──►  Tidal API
 ratatui       = "0.29"
 crossterm     = { version = "0.28", features = ["event-stream"] }
 tokio         = { version = "1", features = ["full"] }
-reqwest       = { version = "0.12", features = ["json", "blocking"] }
 serde         = { version = "1", features = ["derive"] }
 serde_json    = "1"
 anyhow        = "1"
+rodio         = "0.20"
+dirs          = "5"
 libc          = "0.2"
-ratatui-image = "6"
+ratatui-image = { version = "6", default-features = false }
 image         = "0.25"
+reqwest = { version = "0.12", features = ["json"] }
+open = "5"
+axum  = "0.8"
+zbus  = "5"
+symphonia = { version = "0.5", features = ["isomp4", "aac"] }
+rustfft   = "6"
+base64    = "0.22"
+nucleo-matcher = "0.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+souvlaki = "0.8.3"   # media keys / Control Center / Now Playing
+cocoa    = "0.24"    # AppKit run loop on the main thread (souvlaki dep too)
+objc     = "0.2"
 ```
 
 ---
