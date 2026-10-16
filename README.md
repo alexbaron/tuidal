@@ -10,7 +10,7 @@ Fork of the original Tuidal for personal purpose.
 <img width="1271" height="829" alt="image" src="https://github.com/user-attachments/assets/079f0484-96b4-412b-aa71-14290e3f428b" />
 # Tuidal
 
-A terminal music player for Tidal, built with Rust and ratatui. Streams lossless audio directly in your terminal with album art support via the Kitty graphics protocol.
+A terminal music player for Tidal, built with Rust and ratatui. Streams lossless audio directly in your terminal with album art support via the Kitty, Sixel or iTerm2 graphics protocols.
 
 ![tuidal screenshot](./img/2026-03-30-233237_hyprshot.png)
 ![tuidal screenshot](./img/2026-03-30-233249_hyprshot.png)
@@ -20,14 +20,14 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 ## Features
 
 - 🎵 Stream FLAC lossless and HiRes audio
-- 🖼️ Album art rendered inline (Kitty terminal)
+- 🖼️ Album art rendered inline (Kitty, Sixel or iTerm2 terminals; halfblocks fallback elsewhere)
 - 🔍 Search tracks
 - 📋 Queue management
 - 📚 Library — playlists, mixes, favorites
 - ⚡ Non-blocking UI with async background operations
 - 🔑 OAuth Device Flow authentication (no password required)
 - 📈 Real-time audio spectrum (FFT) tab
-- 🖼️ Optional background image behind the spectrum (album cover or random wallhaven.cc wallpaper, kitty only)
+- 🖼️ Optional background image behind the spectrum (album cover or random wallhaven.cc wallpaper): true under-the-text background on kitty; on Sixel/iTerm2 the spectrum is composited into the image (lower frame rate, Sixel slower)
 - 🎛️ Effects tab: 10-band equalizer with presets, balance, bass/treble, stereo width, crossfeed, echo, compressor, volume normalization (requires mpv)
 
 ---
@@ -39,7 +39,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - [Rust](https://rustup.rs/) (edition 2024)
 - [mpv](https://mpv.io/) — audio playback
 - [Python 3.10+](https://www.python.org/) with [tidalapi](https://github.com/EbbLabs/python-tidal)
-- [Kitty terminal](https://sw.kovidgoyal.net/kitty/) — for album art (optional)
+- A graphics-capable terminal — for album art and the spectrum background (optional): [kitty](https://sw.kovidgoyal.net/kitty/), Ghostty (kitty protocol), iTerm2, WezTerm (iTerm2/Sixel). Other terminals fall back to halfblocks/no image.
 
 ### Python dependency
 
@@ -134,6 +134,18 @@ cargo run # or ./target/release/tuidal
 ```
 
 If not set, tuidal defaults to running `python3` from your system PATH. This makes tuidal portable across environments, virtualenvs, and OS distributions.
+
+### Image Protocol Override (`TUIDAL_IMAGE_PROTOCOL`)
+
+tuidal auto-detects the terminal graphics protocol. To force one (or to enable images when detection fails), set `TUIDAL_IMAGE_PROTOCOL` to `kitty`, `sixel`, `iterm2` or `halfblocks` (case-insensitive). It wins over detection, including the kitty auto-detection.
+
+```bash
+TUIDAL_IMAGE_PROTOCOL=sixel ./target/release/tuidal
+```
+
+### Background Debug Log (`TUIDAL_BG_DEBUG`)
+
+Set `TUIDAL_BG_DEBUG=1` to append background/picker diagnostics to `/tmp/tuidal-bg.log`.
 
 ---
 
@@ -280,7 +292,7 @@ image         = "0.25"
 - Audio quality depends on your Tidal subscription.
 - The spectrum tab downloads the stream a second time for analysis.
 - Wallhaven images are fetched at runtime from wallhaven.cc (SFW, random, query configurable via `wallhaven_query` in `settings.json`). If HiRes is unavailable for a track, tuidal automatically falls back to Lossless, then High.
-- Album art requires the Kitty terminal. In other terminals, a placeholder is shown.
+- Album art uses the Kitty, Sixel or iTerm2 protocols (halfblocks fallback elsewhere). The spectrum background is a true under-the-text image on kitty only; on Sixel/iTerm2 it is composited into an image at a lower frame rate.
 - This project uses tidalapi, an unofficial Tidal API client. Use it only for personal use and in accordance with Tidal's terms of service.
 
 ---

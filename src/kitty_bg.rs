@@ -140,6 +140,14 @@ fn compose_fit_height(img: &DynamicImage, px_w: u32, px_h: u32) -> image::RgbaIm
     bg
 }
 
+/// Compose `img` into a (px_w x px_h) background per `layout`.
+pub fn compose(img: &DynamicImage, px_w: u32, px_h: u32, layout: BgLayout) -> image::RgbaImage {
+    match layout {
+        BgLayout::Cover => compose_cover(img, px_w, px_h),
+        BgLayout::FitHeight => compose_fit_height(img, px_w, px_h),
+    }
+}
+
 /// Compose `img` into a (px_w x px_h) background per `layout`, PNG-encode it
 /// and return the chunked kitty transmit sequence.
 pub fn transmit_sequence(
@@ -148,10 +156,7 @@ pub fn transmit_sequence(
     px_h: u32,
     layout: BgLayout,
 ) -> Result<String, image::ImageError> {
-    let composed = match layout {
-        BgLayout::Cover => compose_cover(img, px_w, px_h),
-        BgLayout::FitHeight => compose_fit_height(img, px_w, px_h),
-    };
+    let composed = compose(img, px_w, px_h, layout);
     let mut png = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut png);
     composed.write_to(&mut cursor, image::ImageFormat::Png)?;

@@ -1,4 +1,5 @@
 use crate::audio_fx::{AudioFx, FxControl, PRESETS};
+use crate::composite_bg;
 use crate::i18n::Lang;
 use crate::kitty_bg::{self, BgLayout, SpectrumBg};
 use crate::spectrum::{AnalysisBuffer, SpectrumAnalyzer};
@@ -9,7 +10,7 @@ use crate::tidal::{
 };
 use image::DynamicImage;
 use ratatui_image::picker::Picker;
-use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::protocol::{Protocol, StatefulProtocol};
 use serde::Deserialize as DeserializeAttr;
 use serde::Serialize;
 use std::sync::Arc;
@@ -76,6 +77,15 @@ pub enum AppEvent {
     WallhavenReady(DynamicImage),
     WallhavenError(String),
     BackgroundEncoded { key: BgKey, sequence: String },
+    BackgroundComposed {
+        key: BgKey,
+        image: Option<Arc<image::RgbaImage>>,
+    },
+    SpectrumFrameEncoded {
+        key: BgKey,
+        area: ratatui::layout::Rect,
+        proto: Option<Protocol>,
+    },
 }
 
 /// Identifies which image/geometry the background currently targets.
@@ -87,6 +97,19 @@ pub struct BgKey {
     px_h: u32,
 }
 
+/// How the spectrum background is produced, depending on the terminal's
+/// graphics protocol.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum BgMode {
+    /// kitty protocol: the image is placed under the text via z-index.
+    Kitty,
+    /// Sixel / iTerm2: the spectrum is drawn in pixels on the background and
+    /// the composite is sent through ratatui-image each frame.
+    Composite,
+    /// Halfblocks or no picker: no image background.
+    Unsupported,
+}
+
 /// Private bookkeeping for the kitty background image lifecycle.
 #[derive(Default)]
 struct BgState {
@@ -95,9 +118,16 @@ struct BgState {
     placed_area: Option<ratatui::layout::Rect>,
     sequence_to_write: String,
     frame_counter: u8,
-    logged_no_kitty: bool,
+    logged_unsupported: bool,
     /// Key whose encode failed (panic or encode error): never retried.
     failed_key: Option<BgKey>,
+    /// Composite mode: cached composed background for the current key.
+    composed: Option<(BgKey, Arc<image::RgbaImage>)>,
+    /// Composite mode: at most one frame encode in flight.
+    frame_in_flight: bool,
+    /// Composite mode: latest encoded frame, rendered by the ui.
+    composite_proto: Option<Protocol>,
+    composite_area: Option<ratatui::layout::Rect>,
 }
 
 pub enum ApiCommand {
@@ -437,6 +467,47 @@ impl App {
                             kitty_bg::delete_sequence() + &sequence;
                         self.bg_state.transmitted_key = Some(key);
                         self.bg_state.placed_area = None;
+                    }
+                }
+            }
+            AppEvent::BackgroundComposed { key, image } => {
+                if self.bg_state.pending_key.as_ref() == Some(&key) {
+                    self.bg_state.pending_key = None;
+                    match image {
+                        None => {
+                            kitty_bg::bg_log("compose failed");
+                            self.bg_state.failed_key = Some(key);
+                        }
+                        Some(img) => {
+                            kitty_bg::bg_log(&format!(
+                                "composed: {}x{}",
+                                img.width(),
+                                img.height()
+                            ));
+                            self.bg_state.composed = Some((key, img));
+                            self.bg_state.composite_proto = None;
+                        }
+                    }
+                }
+            }
+            AppEvent::SpectrumFrameEncoded { key, area, proto } => {
+                self.bg_state.frame_in_flight = false;
+                if self
+                    .bg_state
+                    .composed
+                    .as_ref()
+                    .map(|(k, _)| k == &key)
+                    .unwrap_or(false)
+                {
+                    match proto {
+                        Some(p) => {
+                            self.bg_state.composite_proto = Some(p);
+                            self.bg_state.composite_area = Some(area);
+                        }
+                        None => {
+                            kitty_bg::bg_log("frame encode failed");
+                            self.bg_state.failed_key = Some(key);
+                        }
                     }
                 }
             }
@@ -1184,19 +1255,26 @@ impl App {
         self.save_settings();
     }
 
-    // ── Spectrum background (kitty graphics protocol) ─────────────────────
+    // ── Spectrum background (kitty / Sixel / iTerm2 graphics) ─────────────
 
-    fn kitty_protocol(&self) -> bool {
-        matches!(
-            self.picker.as_ref().map(|p| p.protocol_type()),
-            Some(ratatui_image::picker::ProtocolType::Kitty)
-        )
+    pub fn bg_mode(&self) -> BgMode {
+        match self.picker.as_ref().map(|p| p.protocol_type()) {
+            Some(ratatui_image::picker::ProtocolType::Kitty) => BgMode::Kitty,
+            Some(ratatui_image::picker::ProtocolType::Sixel)
+            | Some(ratatui_image::picker::ProtocolType::Iterm2) => BgMode::Composite,
+            _ => BgMode::Unsupported,
+        }
+    }
+
+    /// Latest composite frame ready to render (Composite mode only).
+    pub fn composite_frame(&self) -> Option<&Protocol> {
+        self.bg_state.composite_proto.as_ref()
     }
 
     /// Cycle the background source (key `b` on the spectrum tab).
     pub fn bg_cycle_source(&mut self) {
-        if !self.kitty_protocol() {
-            self.status_msg = self.lang.strings().bg_requires_kitty.to_string();
+        if self.bg_mode() == BgMode::Unsupported {
+            self.status_msg = self.lang.strings().bg_requires_graphics.to_string();
             return;
         }
         self.spectrum_bg = self.spectrum_bg.cycle();
@@ -1258,12 +1336,15 @@ impl App {
     }
 
     /// Called right after each `terminal.draw`: returns the escape sequence
-    /// to write on stdout, or None when nothing must be emitted.
+    /// to write on stdout (kitty mode), or None when nothing must be emitted.
+    /// In Composite mode the frames go through `composite_proto` and the ui
+    /// renders them as a ratatui-image widget, so this always returns None.
     pub fn bg_tick(&mut self) -> Option<String> {
-        if !self.kitty_protocol() {
-            if !self.bg_state.logged_no_kitty {
-                self.bg_state.logged_no_kitty = true;
-                kitty_bg::bg_log("kitty protocol not detected — background disabled");
+        let mode = self.bg_mode();
+        if mode == BgMode::Unsupported {
+            if !self.bg_state.logged_unsupported {
+                self.bg_state.logged_unsupported = true;
+                kitty_bg::bg_log("no graphics protocol detected — background disabled");
             }
             return None;
         }
@@ -1276,13 +1357,23 @@ impl App {
             && self.spectrum_area.is_some()
             && self.spectrum_bg != SpectrumBg::None;
         if !active {
-            if self.bg_state.placed_area.is_some() || self.bg_state.transmitted_key.is_some() {
-                kitty_bg::bg_log(&format!(
-                    "inactive: delete tab={:?} area={:?} bg={:?}",
-                    self.active_tab, self.spectrum_area, self.spectrum_bg
-                ));
-                self.bg_state = BgState::default();
-                return Some(kitty_bg::delete_sequence());
+            match mode {
+                BgMode::Kitty => {
+                    if self.bg_state.placed_area.is_some()
+                        || self.bg_state.transmitted_key.is_some()
+                    {
+                        kitty_bg::bg_log(&format!(
+                            "inactive: delete tab={:?} area={:?} bg={:?}",
+                            self.active_tab, self.spectrum_area, self.spectrum_bg
+                        ));
+                        self.bg_state = BgState::default();
+                        return Some(kitty_bg::delete_sequence());
+                    }
+                }
+                BgMode::Composite => {
+                    self.bg_state = BgState::default();
+                }
+                BgMode::Unsupported => {}
             }
             return None;
         }
@@ -1321,6 +1412,78 @@ impl App {
             key.image_tag = u64::MAX;
         }
 
+        // Album covers read much better as a sharp center over a blurred
+        // backdrop; photos fill the area with a plain cover-crop.
+        let layout = match self.spectrum_bg {
+            SpectrumBg::Cover => BgLayout::FitHeight,
+            _ => BgLayout::Cover,
+        };
+
+        if mode == BgMode::Composite {
+            // Compose the background off-thread when the key changed.
+            if self.bg_state.composed.as_ref().map(|(k, _)| k) != Some(&key)
+                && self.bg_state.pending_key.as_ref() != Some(&key)
+            {
+                kitty_bg::bg_log(&format!(
+                    "compose: key tag={} {}x{} area={:?} source_img={}",
+                    key.image_tag, px_w, px_h, area, source_img.is_some()
+                ));
+                self.bg_state.pending_key = Some(key.clone());
+                let key_task = key.clone();
+                let img = img.clone();
+                let tx = self.tx();
+                tokio::task::spawn_blocking(move || {
+                    let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        kitty_bg::compose(&img, px_w, px_h, layout)
+                    }))
+                    .ok()
+                    .map(Arc::new);
+                    let _ = tx.send(AppEvent::BackgroundComposed {
+                        key: key_task,
+                        image,
+                    });
+                });
+            }
+
+            // Draw the spectrum onto the cached background and encode at most
+            // one frame at a time; throughput follows the encode cost.
+            let frame_bg = self
+                .bg_state
+                .composed
+                .as_ref()
+                .and_then(|(k, bg)| if *k == key { Some(bg.clone()) } else { None });
+            if let (Some(bg), false, false) = (
+                frame_bg,
+                self.bg_state.frame_in_flight,
+                self.spectrum.bands.is_empty(),
+            ) {
+                self.bg_state.frame_in_flight = true;
+                let bands = self.spectrum.bands.clone();
+                let picker = self.picker;
+                let key_task = key.clone();
+                let tx = self.tx();
+                tokio::task::spawn_blocking(move || {
+                    let proto = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let frame = DynamicImage::ImageRgba8(composite_bg::draw_spectrum(
+                            &bg, &bands,
+                        ));
+                        picker.and_then(|p| {
+                            p.new_protocol(frame, area, ratatui_image::Resize::Fit(None))
+                                .ok()
+                        })
+                    }))
+                    .ok()
+                    .flatten();
+                    let _ = tx.send(AppEvent::SpectrumFrameEncoded {
+                        key: key_task,
+                        area,
+                        proto,
+                    });
+                });
+            }
+            return None;
+        }
+
         // Encode off-thread when the key changed (new image or new size).
         if self.bg_state.transmitted_key.as_ref() != Some(&key)
             && self.bg_state.pending_key.as_ref() != Some(&key)
@@ -1332,12 +1495,6 @@ impl App {
             self.bg_state.pending_key = Some(key.clone());
             let key_task = key.clone();
             let img = img.clone();
-            // Album covers read much better as a sharp center over a blurred
-            // backdrop; photos fill the area with a plain cover-crop.
-            let layout = match self.spectrum_bg {
-                SpectrumBg::Cover => BgLayout::FitHeight,
-                _ => BgLayout::Cover,
-            };
             let tx = self.tx();
             tokio::task::spawn_blocking(move || {
                 let sequence = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

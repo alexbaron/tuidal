@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod audio_fx;
+mod composite_bg;
 mod i18n;
 mod kitty_bg;
 mod mpris;
@@ -36,9 +37,9 @@ impl Drop for TerminalRestorer {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let _restorer = TerminalRestorer;
+/// Build the image protocol picker: query the terminal, force kitty when we
+/// provably run inside it, then let TUIDAL_IMAGE_PROTOCOL override everything.
+fn build_picker() -> Option<ratatui_image::picker::Picker> {
     let mut picker = match ratatui_image::picker::Picker::from_query_stdio() {
         Ok(p) => Some(p),
         Err(e) => {
@@ -55,11 +56,39 @@ async fn main() -> Result<()> {
     if let (Some(p), true) = (picker.as_mut(), in_kitty) {
         p.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
     }
+    // TUIDAL_IMAGE_PROTOCOL=kitty|sixel|iterm2|halfblocks wins over detection,
+    // including when the stdio query failed entirely.
+    if let Ok(raw) = std::env::var("TUIDAL_IMAGE_PROTOCOL") {
+        let forced = match raw.to_lowercase().as_str() {
+            "kitty" => Some(ratatui_image::picker::ProtocolType::Kitty),
+            "sixel" => Some(ratatui_image::picker::ProtocolType::Sixel),
+            "iterm2" => Some(ratatui_image::picker::ProtocolType::Iterm2),
+            "halfblocks" => Some(ratatui_image::picker::ProtocolType::Halfblocks),
+            _ => {
+                kitty_bg::bg_log(&format!("unknown TUIDAL_IMAGE_PROTOCOL={raw:?} — ignored"));
+                None
+            }
+        };
+        if let Some(t) = forced {
+            picker
+                .get_or_insert_with(|| {
+                    ratatui_image::picker::Picker::from_fontsize((10, 20))
+                })
+                .set_protocol_type(t);
+        }
+    }
     kitty_bg::bg_log(&format!(
         "picker: in_kitty={in_kitty} protocol={:?} font_size={:?}",
         picker.as_ref().map(|p| p.protocol_type()),
         picker.as_ref().map(|p| p.font_size())
     ));
+    picker
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let _restorer = TerminalRestorer;
+    let picker = build_picker();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;

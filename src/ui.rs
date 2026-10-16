@@ -1323,8 +1323,10 @@ fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(DIM))
         .title(Span::styled(title, Style::default().fg(ACCENT)));
-    // Keep the chart area transparent when a kitty background is shown.
-    if app.spectrum_bg == crate::kitty_bg::SpectrumBg::None {
+    // Keep the chart area transparent when a graphics background is shown.
+    if app.spectrum_bg == crate::kitty_bg::SpectrumBg::None
+        || app.bg_mode() == crate::app::BgMode::Unsupported
+    {
         block = block.style(Style::default().bg(BG2));
     }
     let inner = block.inner(area);
@@ -1361,9 +1363,59 @@ fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    // Composite mode (Sixel/iTerm2): the spectrum is drawn inside the image;
+    // only a thin label row stays as text below it.
+    if app.bg_mode() == crate::app::BgMode::Composite
+        && app.spectrum_bg != crate::kitty_bg::SpectrumBg::None
+    {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        let chart_area = rows[0];
+        let labels_row = rows[1];
+        app.spectrum_area = Some(chart_area);
+
+        // 5 frequency labels evenly spaced along the x axis.
+        let n = app.spectrum.bands.len();
+        let width = labels_row.width as usize;
+        let mut spans: Vec<Span> = Vec::new();
+        let mut cursor = 0usize;
+        for i in 0..5 {
+            let idx = i * (n - 1) / 4;
+            let hz = app.spectrum.band_freqs.get(idx).copied().unwrap_or(0.0);
+            let label = fmt_hz(hz);
+            let label_w = label.chars().count();
+            let col = match i {
+                0 => 0,
+                4 => width.saturating_sub(label_w),
+                _ => width.saturating_sub(label_w) * i / 4,
+            };
+            if col >= cursor && col + label_w <= width {
+                if col > cursor {
+                    spans.push(Span::raw(" ".repeat(col - cursor)));
+                }
+                spans.push(Span::styled(label, Style::default().fg(MUTED)));
+                cursor = col + label_w;
+            }
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)), labels_row);
+
+        match app.composite_frame() {
+            Some(proto) => {
+                f.render_widget(ratatui_image::Image::new(proto), chart_area);
+            }
+            None => render_spectrum_chart(f, app, chart_area),
+        }
+        return;
+    }
+
     // Chart is about to render: expose its area to the background placer.
     app.spectrum_area = Some(inner);
+    render_spectrum_chart(f, app, inner);
+}
 
+fn render_spectrum_chart(f: &mut Frame, app: &App, area: Rect) {
     let n = app.spectrum.bands.len();
     let data: Vec<(f64, f64)> = app
         .spectrum
@@ -1400,7 +1452,7 @@ fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled("  0 dB", Style::default().fg(MUTED)),
                 ]),
         );
-    f.render_widget(chart, inner);
+    f.render_widget(chart, area);
 }
 
 fn truncate(s: &str, max: usize) -> String {

@@ -109,7 +109,7 @@ pub struct Strings {
     pub fx_hints: &'static str,
     pub fx_no_mpv: &'static str,
     // Spectrum background
-    pub bg_requires_kitty: &'static str,
+    pub bg_requires_graphics: &'static str,
     pub bg_fetching: &'static str,
     pub visualizer_hints: &'static str,
 }
@@ -199,7 +199,7 @@ static FR: Strings = Strings {
     fx_off: "désactivé",
     fx_hints: "↑/↓ choisir  ←/→ régler  Entrée basculer  [ ] préréglage  R réinitialiser",
         fx_no_mpv: "⚠ mpv introuvable — les effets nécessitent mpv (brew install mpv)",
-    bg_requires_kitty: "Fond d'écran : terminal kitty requis",
+    bg_requires_graphics: "Fond d'écran : terminal avec images (kitty, Sixel, iTerm2) requis",
     bg_fetching: "⟳ Téléchargement d'une image wallhaven...",
     visualizer_hints: "b fond  B nouvelle image",
 };
@@ -289,7 +289,7 @@ static EN: Strings = Strings {
     fx_off: "disabled",
     fx_hints: "↑/↓ select  ←/→ adjust  Enter toggle  [ ] preset  R reset",
         fx_no_mpv: "⚠ mpv not found — effects require mpv (brew install mpv)",
-    bg_requires_kitty: "Background: kitty terminal required",
+    bg_requires_graphics: "Background: graphics-capable terminal (kitty, Sixel, iTerm2) required",
     bg_fetching: "⟳ Fetching a wallhaven image...",
     visualizer_hints: "b background  B new image",
 };
@@ -379,7 +379,7 @@ static DE: Strings = Strings {
     fx_off: "aus",
     fx_hints: "↑/↓ wählen  ←/→ ändern  Enter umschalten  [ ] Voreinstellung  R zurücksetzen",
         fx_no_mpv: "⚠ mpv nicht gefunden — Effekte benötigen mpv (brew install mpv)",
-    bg_requires_kitty: "Hintergrund: kitty-Terminal erforderlich",
+    bg_requires_graphics: "Hintergrund: Terminal mit Grafikunterstützung (kitty, Sixel, iTerm2) erforderlich",
     bg_fetching: "⟳ Wallhaven-Bild wird geladen...",
     visualizer_hints: "b Hintergrund  B neues Bild",
 };
@@ -469,7 +469,7 @@ static RO: Strings = Strings {
     fx_off: "dezactivat",
     fx_hints: "↑/↓ alege  ←/→ reglează  Enter comută  [ ] presetare  R resetează",
         fx_no_mpv: "⚠ mpv negăsit — efectele necesită mpv (brew install mpv)",
-    bg_requires_kitty: "Fundal: necesită terminalul kitty",
+    bg_requires_graphics: "Fundal: necesită un terminal cu grafică (kitty, Sixel, iTerm2)",
     bg_fetching: "⟳ Se descarcă o imagine wallhaven...",
     visualizer_hints: "b fundal  B imagine nouă",
 };
