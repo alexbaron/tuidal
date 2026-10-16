@@ -33,6 +33,15 @@ fn track_haystack(t: &Track) -> String {
     format!("{} {} {}", t.title, t.artist_names(), t.album.title)
 }
 
+/// Spectrum tab rendering style.
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpectrumStyle {
+    Curve,
+    #[default]
+    Bars,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
     Search,
@@ -275,6 +284,8 @@ pub struct App {
     pub fx_cursor: usize,
     /// Background image source for the spectrum tab.
     pub spectrum_bg: SpectrumBg,
+    /// Spectrum rendering style (curve or cava-style bars).
+    pub spectrum_style: SpectrumStyle,
     /// wallhaven.cc search query (persisted in settings).
     pub wallhaven_query: String,
     /// Last wallpaper downloaded from wallhaven.
@@ -350,6 +361,7 @@ impl App {
             audio_fx: AudioFx::default(),
             fx_cursor: 0,
             spectrum_bg: SpectrumBg::Cover,
+            spectrum_style: SpectrumStyle::default(),
             wallhaven_query: "abstract".to_string(),
             wallhaven_image: None,
             search_limit: 50,
@@ -1582,6 +1594,18 @@ impl App {
         self.save_settings();
     }
 
+    /// Toggle the spectrum rendering style (key `v` on the Visualizer tab).
+    pub fn cycle_spectrum_style(&mut self) {
+        self.spectrum_style = match self.spectrum_style {
+            SpectrumStyle::Curve => SpectrumStyle::Bars,
+            SpectrumStyle::Bars => SpectrumStyle::Curve,
+        };
+        self.status_msg = self
+            .lang
+            .spectrum_style_changed(self.lang.spectrum_style_label(self.spectrum_style));
+        self.save_settings();
+    }
+
     /// Download a random wallpaper from wallhaven.cc in the background.
     pub fn fetch_wallhaven_bg(&mut self) {
         self.status_msg = self.lang.strings().bg_fetching.to_string();
@@ -1754,14 +1778,19 @@ impl App {
             ) {
                 self.bg_state.frame_in_flight = true;
                 let bands = self.spectrum.bands.clone();
+                let peaks = self.spectrum.peaks.clone();
+                let style = self.spectrum_style;
                 let picker = self.picker;
                 let key_task = key.clone();
                 let tx = self.tx();
                 tokio::task::spawn_blocking(move || {
                     let proto = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let frame = DynamicImage::ImageRgba8(composite_bg::draw_spectrum(
-                            &bg, &bands,
-                        ));
+                        let frame = DynamicImage::ImageRgba8(match style {
+                            SpectrumStyle::Bars => {
+                                composite_bg::draw_spectrum_bars(&bg, &bands, &peaks)
+                            }
+                            SpectrumStyle::Curve => composite_bg::draw_spectrum(&bg, &bands),
+                        });
                         picker.and_then(|p| {
                             p.new_protocol(frame, area, ratatui_image::Resize::Fit(None))
                                 .ok()
@@ -1839,6 +1868,7 @@ impl App {
             volume: self.player.volume,
             audio_fx: self.audio_fx.clone(),
             spectrum_bg: self.spectrum_bg,
+            spectrum_style: self.spectrum_style,
             wallhaven_query: self.wallhaven_query.clone(),
             search_limit: self.search_limit,
         };
@@ -1863,6 +1893,7 @@ impl App {
                 // instead of pushing it over IPC.
                 self.player.af = self.audio_fx.to_mpv_af();
                 self.spectrum_bg = settings.spectrum_bg;
+                self.spectrum_style = settings.spectrum_style;
                 self.wallhaven_query = settings.wallhaven_query;
                 self.search_limit = settings.search_limit;
             }
@@ -1894,6 +1925,8 @@ struct Settings {
     audio_fx: AudioFx,
     #[serde(default = "default_spectrum_bg")]
     spectrum_bg: SpectrumBg,
+    #[serde(default)]
+    spectrum_style: SpectrumStyle,
     #[serde(default = "default_wallhaven_query")]
     wallhaven_query: String,
     #[serde(default = "default_search_limit")]

@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod audio_fx;
+mod cavacore;
 mod composite_bg;
 mod fuzzy;
 mod i18n;
@@ -313,6 +314,7 @@ fn handle_normal(key: KeyCode, app: &mut App) {
                 }
                 return;
             }
+            KeyCode::Char('v') => return app.cycle_spectrum_style(),
             _ => {}
         }
     }

@@ -1,3 +1,4 @@
+use crate::app::SpectrumStyle;
 use crate::kitty_bg::SpectrumBg;
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -209,7 +210,7 @@ static FR: Strings = Strings {
         fx_no_mpv: "⚠ mpv introuvable — les effets nécessitent mpv (brew install mpv)",
     bg_requires_graphics: "Fond d'écran : terminal avec images (kitty, Sixel, iTerm2) requis",
     bg_fetching: "⟳ Téléchargement d'une image wallhaven...",
-    visualizer_hints: "b fond  B nouvelle image",
+    visualizer_hints: "b fond  B nouvelle image  v style",
 };
 
 static EN: Strings = Strings {
@@ -303,7 +304,7 @@ static EN: Strings = Strings {
         fx_no_mpv: "⚠ mpv not found — effects require mpv (brew install mpv)",
     bg_requires_graphics: "Background: graphics-capable terminal (kitty, Sixel, iTerm2) required",
     bg_fetching: "⟳ Fetching a wallhaven image...",
-    visualizer_hints: "b background  B new image",
+    visualizer_hints: "b background  B new image  v style",
 };
 
 static DE: Strings = Strings {
@@ -397,7 +398,7 @@ static DE: Strings = Strings {
         fx_no_mpv: "⚠ mpv nicht gefunden — Effekte benötigen mpv (brew install mpv)",
     bg_requires_graphics: "Hintergrund: Terminal mit Grafikunterstützung (kitty, Sixel, iTerm2) erforderlich",
     bg_fetching: "⟳ Wallhaven-Bild wird geladen...",
-    visualizer_hints: "b Hintergrund  B neues Bild",
+    visualizer_hints: "b Hintergrund  B neues Bild  v Stil",
 };
 
 static RO: Strings = Strings {
@@ -491,7 +492,7 @@ static RO: Strings = Strings {
         fx_no_mpv: "⚠ mpv negăsit — efectele necesită mpv (brew install mpv)",
     bg_requires_graphics: "Fundal: necesită un terminal cu grafică (kitty, Sixel, iTerm2)",
     bg_fetching: "⟳ Se descarcă o imagine wallhaven...",
-    visualizer_hints: "b fundal  B imagine nouă",
+    visualizer_hints: "b fundal  B imagine nouă  v stil",
 };
 
 impl Lang {
@@ -747,6 +748,29 @@ impl Lang {
             Lang::En => format!("Background: {label}"),
             Lang::De => format!("Hintergrund: {label}"),
             Lang::Ro => format!("Fundal: {label}"),
+        }
+    }
+
+    /// Short label for a SpectrumStyle ("curve", "bars").
+    pub fn spectrum_style_label(self, style: SpectrumStyle) -> &'static str {
+        match (self, style) {
+            (Lang::Fr, SpectrumStyle::Curve) => "courbe",
+            (Lang::En, SpectrumStyle::Curve) => "curve",
+            (Lang::De, SpectrumStyle::Curve) => "Kurve",
+            (Lang::Ro, SpectrumStyle::Curve) => "curbă",
+            (Lang::Fr, SpectrumStyle::Bars) => "barres",
+            (Lang::En, SpectrumStyle::Bars) => "bars",
+            (Lang::De, SpectrumStyle::Bars) => "Balken",
+            (Lang::Ro, SpectrumStyle::Bars) => "bare",
+        }
+    }
+
+    pub fn spectrum_style_changed(self, label: &str) -> String {
+        match self {
+            Lang::Fr => format!("Spectre : {label}"),
+            Lang::En => format!("Spectrum: {label}"),
+            Lang::De => format!("Spektrum: {label}"),
+            Lang::Ro => format!("Spectru: {label}"),
         }
     }
 

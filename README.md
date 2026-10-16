@@ -26,7 +26,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - 📚 Library — playlists, mixes, favorites
 - ⚡ Non-blocking UI with async background operations
 - 🔑 OAuth Device Flow authentication (no password required)
-- 📈 Real-time audio spectrum (FFT) tab
+- 📈 Real-time audio spectrum tab — cava-style bars or curve
 - 🖼️ Optional background image behind the spectrum (album cover or random wallhaven.cc wallpaper): true under-the-text background on kitty; on Sixel/iTerm2 the spectrum is composited into the image (lower frame rate, Sixel slower)
 - 🎛️ Effects tab: 10-band equalizer with presets, balance, bass/treble, stereo width, crossfeed, echo, compressor, volume normalization (requires mpv)
 - 🎼 Theme search — find editorial playlists by genre or mood (trip hop, classical, lofi…)
@@ -155,7 +155,8 @@ tuidal detects `.venv/` automatically; see [Python environment](#python-environm
 ### Settings (`~/.config/tuidal/settings.json`)
 
 Persisted keys include `lang`, `quality`, `volume`, `audio_fx`, `spectrum_bg`
-(`"none"` | `"cover"` | `"wallhaven"`, default `"cover"`), `wallhaven_query`
+(`"none"` | `"cover"` | `"wallhaven"`, default `"cover"`), `spectrum_style`
+(`"bars"` | `"curve"`, default `"bars"`), `wallhaven_query`
 (default `"abstract"`) and `search_limit` (max results per search, default `50`).
 
 ### Python Executable Path (`TUIDAL_PYTHON_PATH`)
@@ -271,6 +272,11 @@ cargo run
 |-----|--------|
 | `b` | Cycle background (none → cover → wallhaven) |
 | `B` | Fetch a new random wallpaper (wallhaven source) |
+| `v` | Toggle spectrum style (bars ↔ curve) |
+
+The spectrum engine is a Rust port of [cava](https://github.com/karlstav/cava)'s
+cavacore (MIT, © Karl Stavestrand): logarithmic band splitting, autosens,
+gravity falloff and noise reduction.
 
 ---
 

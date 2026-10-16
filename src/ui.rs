@@ -1661,8 +1661,14 @@ fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // The band count follows the chart width; the main loop reads this hint.
-    let n_bands = (inner.width.saturating_sub(8) as usize).clamp(16, 256);
+    // The band count follows the renderer and chart width; the main loop
+    // reads this hint. Bars take 2 columns each (bar + gap).
+    let n_bands = match app.spectrum_style {
+        crate::app::SpectrumStyle::Bars => (inner.width as usize / 2).clamp(16, 256),
+        crate::app::SpectrumStyle::Curve => {
+            (inner.width.saturating_sub(8) as usize).clamp(16, 256)
+        }
+    };
     app.spectrum_bands_hint = n_bands;
 
     let centered_msg = |msg: &str| {
@@ -1703,42 +1709,141 @@ fn draw_visualizer_tab(f: &mut Frame, app: &mut App, area: Rect) {
         app.spectrum_area = Some(chart_area);
 
         // 5 frequency labels evenly spaced along the x axis.
-        let n = app.spectrum.bands.len();
-        let width = labels_row.width as usize;
-        let mut spans: Vec<Span> = Vec::new();
-        let mut cursor = 0usize;
-        for i in 0..5 {
-            let idx = i * (n - 1) / 4;
-            let hz = app.spectrum.band_freqs.get(idx).copied().unwrap_or(0.0);
-            let label = fmt_hz(hz);
-            let label_w = label.chars().count();
-            let col = match i {
-                0 => 0,
-                4 => width.saturating_sub(label_w),
-                _ => width.saturating_sub(label_w) * i / 4,
-            };
-            if col >= cursor && col + label_w <= width {
-                if col > cursor {
-                    spans.push(Span::raw(" ".repeat(col - cursor)));
-                }
-                spans.push(Span::styled(label, Style::default().fg(MUTED)));
-                cursor = col + label_w;
-            }
-        }
+        let spans = spectrum_x_labels(&app.spectrum.band_freqs, labels_row.width as usize);
         f.render_widget(Paragraph::new(Line::from(spans)), labels_row);
 
         match app.composite_frame() {
             Some(proto) => {
                 f.render_widget(ratatui_image::Image::new(proto), chart_area);
             }
-            None => render_spectrum_chart(f, app, chart_area),
+            None => render_spectrum(f, app, chart_area),
         }
         return;
     }
 
     // Chart is about to render: expose its area to the background placer.
     app.spectrum_area = Some(inner);
-    render_spectrum_chart(f, app, inner);
+    render_spectrum(f, app, inner);
+}
+
+/// 5 frequency labels evenly spread over `width` columns (MUTED).
+fn spectrum_x_labels(band_freqs: &[f32], width: usize) -> Vec<Span<'static>> {
+    let n = band_freqs.len().max(1);
+    let mut spans: Vec<Span> = Vec::new();
+    let mut cursor = 0usize;
+    for i in 0..5 {
+        let idx = i * (n - 1) / 4;
+        let hz = band_freqs.get(idx).copied().unwrap_or(0.0);
+        let label = fmt_hz(hz);
+        let label_w = label.chars().count();
+        let col = match i {
+            0 => 0,
+            4 => width.saturating_sub(label_w),
+            _ => width.saturating_sub(label_w) * i / 4,
+        };
+        if col >= cursor && col + label_w <= width {
+            if col > cursor {
+                spans.push(Span::raw(" ".repeat(col - cursor)));
+            }
+            spans.push(Span::styled(label, Style::default().fg(MUTED)));
+            cursor = col + label_w;
+        }
+    }
+    spans
+}
+
+/// Dispatch to the curve or bars renderer depending on the configured style.
+fn render_spectrum(f: &mut Frame, app: &App, area: Rect) {
+    match app.spectrum_style {
+        crate::app::SpectrumStyle::Bars => render_spectrum_bars(f, app, area),
+        crate::app::SpectrumStyle::Curve => render_spectrum_chart(f, app, area),
+    }
+}
+
+/// Cava-style vertical bars: eighth-block fractional top cell, gradient
+/// (bottom third ACCENT, middle GOLD, top RED) and a ▔ peak marker.
+///
+/// Cells are written straight into the frame buffer and blank cells are
+/// skipped (like ratatui's Canvas does): the kitty background image sits
+/// below the default cell background and only shows through cells the UI
+/// never touches.
+fn render_spectrum_bars(f: &mut Frame, app: &App, area: Rect) {
+    if app.spectrum.bands.is_empty() || area.height < 2 {
+        return;
+    }
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+    // Like ratatui's Canvas: reset the cell background over the whole area so
+    // the kitty image (placed below the default background) shows through
+    // the base BG fill painted by `draw`.
+    f.buffer_mut()
+        .set_style(rows[0], Style::default().bg(ratatui::style::Color::Reset));
+    paint_spectrum_bars(
+        f.buffer_mut(),
+        rows[0],
+        &app.spectrum.bands,
+        &app.spectrum.peaks,
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(spectrum_x_labels(
+            &app.spectrum.band_freqs,
+            rows[1].width as usize,
+        ))),
+        rows[1],
+    );
+}
+
+/// Eighth-block glyphs indexed by 0..=8 (fraction of a cell).
+const EIGHTHS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+/// Paint the bars into `buf` within `area`, touching only non-blank cells.
+fn paint_spectrum_bars(buf: &mut ratatui::buffer::Buffer, area: Rect, bands: &[f32], peaks: &[f32]) {
+    let n = bands.len();
+    let (w, h) = (area.width as usize, area.height as usize);
+    if n == 0 || w == 0 || h == 0 {
+        return;
+    }
+    // One column of gap between bars when the width allows it.
+    let col_w = if w >= n * 2 { 2 } else { 1 };
+    let third = h.div_ceil(3);
+    let level_color = |level: usize| {
+        if level <= third {
+            ACCENT
+        } else if level <= 2 * third {
+            GOLD
+        } else {
+            RED
+        }
+    };
+
+    for (i, v) in bands.iter().enumerate() {
+        let col = i * col_w;
+        if col >= w {
+            break;
+        }
+        let x = area.x + col as u16;
+        let hv = v.clamp(0.0, 1.0) * h as f32;
+        let peak_level =
+            (peaks.get(i).copied().unwrap_or(0.0).clamp(0.0, 1.0) * h as f32).round() as usize;
+        for r in 0..h {
+            // Level 1 = bottom row, level h = top row.
+            let level = h - r;
+            let frac = hv - (level as f32 - 1.0);
+            let (ch, color) = if peak_level > 0 && level == peak_level && peak_level as f32 - hv > 0.4 {
+                ('▔', MUTED)
+            } else if frac >= 1.0 {
+                ('█', level_color(level))
+            } else if frac > 0.0 {
+                (EIGHTHS[((frac * 8.0).round() as usize).clamp(1, 8)], level_color(level))
+            } else {
+                continue;
+            };
+            let y = area.y + r as u16;
+            buf[(x, y)].set_char(ch).set_fg(color);
+        }
+    }
 }
 
 fn render_spectrum_chart(f: &mut Frame, app: &App, area: Rect) {
@@ -1798,4 +1903,48 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(height)) / 2;
     Rect::new(popup_x, popup_y, popup_width, height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Render the cava bars into a TestBackend: a 0..1 ramp must produce
+    /// eighth-block glyphs and full blocks, and the label row must show
+    /// "Hz"/"kHz" axis labels.
+    #[test]
+    fn spectrum_bars_render_glyphs_and_labels() {
+        let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let bands: Vec<f32> = (0..40).map(|i| i as f32 / 39.0).collect();
+        let peaks = vec![0.0f32; 40];
+        let freqs = [40.0, 100.0, 400.0, 2000.0, 16000.0];
+        term.draw(|f| {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(f.area());
+            paint_spectrum_bars(f.buffer_mut(), rows[0], &bands, &peaks);
+            f.render_widget(
+                Paragraph::new(Line::from(spectrum_x_labels(&freqs, rows[1].width as usize))),
+                rows[1],
+            );
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        let mut text = String::new();
+        for y in 0..20u16 {
+            for x in 0..80u16 {
+                text.push_str(buf[(x, y)].symbol());
+            }
+        }
+        assert!(text.contains('█'), "expected a full block glyph");
+        assert!(
+            "▁▂▃▄▅▆▇".chars().any(|c| text.contains(c)),
+            "expected an eighth-block glyph"
+        );
+        assert!(text.contains("Hz"), "expected Hz label in {text:?}");
+        assert!(text.contains("kHz"), "expected kHz label in {text:?}");
+    }
 }

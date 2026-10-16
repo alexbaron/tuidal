@@ -10,8 +10,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use rustfft::Fft;
-use rustfft::num_complex::Complex32;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
@@ -418,100 +416,127 @@ fn finish_decoding(
     }
 }
 
-// ─── SpectrumAnalyzer: FFT + log-spaced bands ───────────────────────────────
+// ─── SpectrumAnalyzer: streaming adapter over CavaCore ─────────────────────
 
-const FFT_N: usize = 2048;
-const F_MIN: f32 = 30.0;
-const F_MAX: f32 = 16_000.0;
-const DB_MIN: f32 = -60.0;
-const SMOOTH: f32 = 0.82;
+/// cava cut-off frequencies: keeps roughly the previous 30 Hz–16 kHz axis.
+const LOW_CUT_OFF: f32 = 40.0;
+const HIGH_CUT_OFF: f32 = 16_000.0;
+/// cava-recommended noise reduction.
+const NOISE_REDUCTION: f32 = 0.77;
+/// Peak-indicator decay per update (~50 ms tick).
+const PEAK_DECAY: f32 = 0.015;
 
 pub struct SpectrumAnalyzer {
-    fft: Arc<dyn Fft<f32>>,
-    window: Vec<f32>,
-    scratch: Vec<Complex32>,
-    /// Smoothed band magnitudes, normalized to 0..1.
+    core: Option<crate::cavacore::CavaCore>,
+    /// Parameters the current core was built with.
+    core_bars: usize,
+    core_rate: u32,
+    /// Sample index in `AnalysisBuffer::samples` already fed to the core.
+    fed_until: usize,
+    debug_counter: u32,
+    /// Smoothed bar heights, normalized to 0..1.
     pub bands: Vec<f32>,
-    /// Geometric center frequency (Hz) of each band.
+    /// Geometric centre frequency (Hz) of each bar.
     pub band_freqs: Vec<f32>,
+    /// Slowly decaying peak marker per bar (0..1), for the bars renderer.
+    pub peaks: Vec<f32>,
 }
 
 impl SpectrumAnalyzer {
     pub fn new() -> Self {
-        let fft = rustfft::FftPlanner::new().plan_fft_forward(FFT_N);
-        let window = (0..FFT_N)
-            .map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / FFT_N as f32).cos()))
-            .collect();
         Self {
-            fft,
-            window,
-            scratch: vec![Complex32::ZERO; FFT_N],
+            core: None,
+            core_bars: 0,
+            core_rate: 0,
+            fed_until: 0,
+            debug_counter: 0,
             bands: Vec::new(),
             band_freqs: Vec::new(),
+            peaks: Vec::new(),
         }
     }
 
-    /// Recompute `bands` for `n_bands` log-spaced bands between F_MIN and
-    /// min(F_MAX, rate/2) at `position`. Returns false when no decoded data
-    /// covers the position (previous display is kept).
+    /// Feed the samples decoded since the last call into the cava core and
+    /// copy the resulting bars into `bands`. The core is rebuilt when the
+    /// sample rate or the requested bar count changes, and reset+rewound on
+    /// seeks. Returns false when nothing new was fed AND there is nothing to
+    /// display yet (previous display is kept otherwise).
     pub fn update(&mut self, buf: &AnalysisBuffer, position: Duration, n_bands: usize) -> bool {
         let rate = buf.rate.max(1);
-        let center = (position.as_secs_f64() * rate as f64) as usize;
-        let start = center.saturating_sub(FFT_N / 2);
-        if start + FFT_N > buf.samples.len() {
+        if self.core.is_none() || self.core_bars != n_bands || self.core_rate != rate {
+            let core = crate::cavacore::CavaCore::new(
+                n_bands.max(1),
+                rate,
+                true,
+                NOISE_REDUCTION,
+                LOW_CUT_OFF,
+                HIGH_CUT_OFF,
+            );
+            self.band_freqs = core.bar_freqs().to_vec();
+            self.bands = vec![0.0; n_bands.max(1)];
+            self.peaks = vec![0.0; n_bands.max(1)];
+            self.core_bars = n_bands;
+            self.core_rate = rate;
+            self.core = Some(core);
+        }
+        let Some(core) = self.core.as_mut() else {
             return false;
+        };
+
+        let target = ((position.as_secs_f64() * rate as f64) as usize).min(buf.samples.len());
+        // Seek (jump > 1 s either way): resync the core. Smaller backward
+        // steps are mpv time-pos jitter and must not reset the sensitivity.
+        let one_sec = rate as usize;
+        if target + one_sec < self.fed_until || target > self.fed_until + one_sec {
+            core.reset();
+            self.fed_until = target.saturating_sub(core.input_buffer_size());
         }
 
-        for (i, w) in self.window.iter().enumerate() {
-            self.scratch[i] = Complex32::new(buf.samples[start + i] * w, 0.0);
+        let fed = target > self.fed_until;
+        let new_count = target.saturating_sub(self.fed_until);
+        if fed {
+            let bars = core.execute(&buf.samples[self.fed_until..target]);
+            self.bands = bars.to_vec();
+            self.fed_until = target;
         }
-        self.fft.process(&mut self.scratch);
-
-        // Magnitude -> dB -> normalized 0..1 over [-60 dB, 0 dB].
-        let half = FFT_N / 2;
-        let mut mags = vec![0f32; half];
-        for (i, c) in self.scratch[..half].iter().enumerate() {
-            let m = c.norm() * 2.0 / FFT_N as f32;
-            let db = 20.0 * m.max(1e-9).log10();
-            mags[i] = ((db - DB_MIN) / -DB_MIN).clamp(0.0, 1.0);
+        // Diagnostic trace (TUIDAL_BG_DEBUG=1): one line every ~20 updates.
+        self.debug_counter = self.debug_counter.wrapping_add(1);
+        if self.debug_counter % 20 == 0 {
+            let max = self.bands.iter().cloned().fold(0.0f32, f32::max);
+            let full = self.bands.iter().filter(|v| **v >= 0.99).count();
+            let peak_in = buf.samples[self.fed_until.saturating_sub(new_count)..self.fed_until]
+                .iter()
+                .fold(0.0f32, |m, s| m.max(s.abs()));
+            crate::kitty_bg::bg_log(&format!(
+                "spectrum: rate={rate} n={} pos={:.2}s target={target} fed={fed} new={new_count} \
+                 in_peak={peak_in:.3} max={max:.3} full={full} sens={:.3e} fps={:.1}",
+                self.bands.len(),
+                position.as_secs_f64(),
+                core.sens(),
+                core.framerate(),
+            ));
         }
 
-        let f_max = F_MAX.min(rate as f32 / 2.0);
-        let bin_hz = rate as f32 / FFT_N as f32;
-        if self.bands.len() != n_bands {
-            self.bands = vec![0.0; n_bands];
-            self.band_freqs = vec![0.0; n_bands];
+        // Peak markers decay every frame.
+        if self.peaks.len() != self.bands.len() {
+            self.peaks = vec![0.0; self.bands.len()];
+        }
+        for (p, b) in self.peaks.iter_mut().zip(self.bands.iter()) {
+            *p = (*p - PEAK_DECAY).max(*b).clamp(0.0, 1.0);
         }
 
-        for i in 0..n_bands {
-            let f_lo = F_MIN * (f_max / F_MIN).powf(i as f32 / n_bands as f32);
-            let f_hi = F_MIN * (f_max / F_MIN).powf((i + 1) as f32 / n_bands as f32);
-            let bin_lo = (f_lo / bin_hz) as usize;
-            let bin_hi = ((f_hi / bin_hz) as usize).min(half - 1);
-            let raw = if bin_hi >= bin_lo && bin_lo < half {
-                mags[bin_lo..=bin_hi].iter().cloned().fold(0.0, f32::max)
-            } else {
-                // Band narrower than one bin: interpolate at its center.
-                self.interp(&mags, (f_lo + f_hi) / 2.0, bin_hz)
-            };
-            self.bands[i] = raw.max(self.bands[i] * SMOOTH);
-            self.band_freqs[i] = (f_lo * f_hi).sqrt();
-        }
-        true
-    }
-
-    fn interp(&self, mags: &[f32], freq: f32, bin_hz: f32) -> f32 {
-        let x = (freq / bin_hz).clamp(0.0, (mags.len() - 1) as f32);
-        let i0 = x.floor() as usize;
-        let i1 = (i0 + 1).min(mags.len() - 1);
-        let t = x - i0 as f32;
-        mags[i0] * (1.0 - t) + mags[i1] * t
+        fed || !self.bands.is_empty()
     }
 
     /// Clear bands (new track / playback stopped).
     pub fn reset(&mut self) {
+        self.core = None;
+        self.core_bars = 0;
+        self.core_rate = 0;
+        self.fed_until = 0;
         self.bands.clear();
         self.band_freqs.clear();
+        self.peaks.clear();
     }
 }
 
