@@ -18,6 +18,7 @@ pub struct Strings {
     pub tab_library: &'static str,
     // Search
     pub search_placeholder: &'static str,
+    pub theme_placeholder: &'static str,
     pub search_results_title: &'static str,
     // Queue
     pub queue_title: &'static str,
@@ -47,6 +48,7 @@ pub struct Strings {
     pub hint_quality: &'static str,
     pub hint_quit: &'static str,
     pub hint_library: &'static str,
+    pub hint_theme: &'static str,
     pub hint_fav_tracks: &'static str,
     pub hint_fav_albums: &'static str,
     pub hint_lang: &'static str,
@@ -120,6 +122,7 @@ static FR: Strings = Strings {
     tab_now: "Lecture",
     tab_library: "Bibliothèque",
     search_placeholder: "Appuyez sur / pour rechercher...",
+    theme_placeholder: "Thème musical (ex. trip hop, classical)...",
     search_results_title: "Résultats",
     queue_title: "File de lecture",
     now_playing_empty: "Aucune lecture — appuyez sur Entrée sur un morceau",
@@ -144,6 +147,7 @@ static FR: Strings = Strings {
     hint_quality: "qualité",
     hint_quit: "quitter",
     hint_library: "bibliothèque",
+    hint_theme: "thème",
     hint_fav_tracks: "titres fav",
     hint_fav_albums: "albums fav",
     hint_lang: "langue",
@@ -210,6 +214,7 @@ static EN: Strings = Strings {
     tab_now: "Now",
     tab_library: "Library",
     search_placeholder: "Press / to search...",
+    theme_placeholder: "Musical theme (e.g. trip hop, classical)...",
     search_results_title: "Results",
     queue_title: "Playback Queue",
     now_playing_empty: "Nothing playing — press Enter on a track",
@@ -234,6 +239,7 @@ static EN: Strings = Strings {
     hint_quality: "quality",
     hint_quit: "quit",
     hint_library: "library",
+    hint_theme: "theme",
     hint_fav_tracks: "fav tracks",
     hint_fav_albums: "fav albums",
     hint_lang: "language",
@@ -300,6 +306,7 @@ static DE: Strings = Strings {
     tab_now: "Jetzt",
     tab_library: "Bibliothek",
     search_placeholder: "/ zum Suchen drücken...",
+    theme_placeholder: "Musikrichtung (z. B. Trip-Hop, Klassik)...",
     search_results_title: "Ergebnisse",
     queue_title: "Wiedergabeliste",
     now_playing_empty: "Keine Wiedergabe — Enter auf einem Titel drücken",
@@ -324,6 +331,7 @@ static DE: Strings = Strings {
     hint_quality: "Qualität",
     hint_quit: "beenden",
     hint_library: "Bibliothek",
+    hint_theme: "Genre",
     hint_fav_tracks: "Fav-Titel",
     hint_fav_albums: "Fav-Alben",
     hint_lang: "Sprache",
@@ -390,6 +398,7 @@ static RO: Strings = Strings {
     tab_now: "Acum",
     tab_library: "Bibliotecă",
     search_placeholder: "Apasă / pentru a căuta...",
+    theme_placeholder: "Temă muzicală (ex. trip hop, clasică)...",
     search_results_title: "Rezultate",
     queue_title: "Coadă de redare",
     now_playing_empty: "Nimic nu rulează — apasă Enter pe o piesă",
@@ -414,6 +423,7 @@ static RO: Strings = Strings {
     hint_quality: "calitate",
     hint_quit: "ieșire",
     hint_library: "bibliotecă",
+    hint_theme: "temă",
     hint_fav_tracks: "piese fav",
     hint_fav_albums: "albume fav",
     hint_lang: "limbă",
@@ -537,6 +547,33 @@ impl Lang {
             Lang::En => format!("Searching \"{q}\"..."),
             Lang::De => format!("Suche \"{q}\"..."),
             Lang::Ro => format!("Se caută \"{q}\"..."),
+        }
+    }
+
+    pub fn searching_theme(self, q: &str) -> String {
+        match self {
+            Lang::Fr => format!("⟳ Recherche de playlists « {q} »..."),
+            Lang::En => format!("⟳ Searching playlists \"{q}\"..."),
+            Lang::De => format!("⟳ Suche Playlists \"{q}\"..."),
+            Lang::Ro => format!("⟳ Se caută playlisturi „{q}”..."),
+        }
+    }
+
+    pub fn theme_results_count(self, n: usize, q: &str) -> String {
+        match self {
+            Lang::Fr => format!("{n} playlists pour « {q} »"),
+            Lang::En => format!("{n} playlists for \"{q}\""),
+            Lang::De => format!("{n} Playlists für \"{q}\""),
+            Lang::Ro => format!("{n} playlisturi pentru „{q}”"),
+        }
+    }
+
+    pub fn theme_results_title(self, q: &str) -> String {
+        match self {
+            Lang::Fr => format!(" Playlists : {q} "),
+            Lang::En => format!(" Playlists: {q} "),
+            Lang::De => format!(" Playlists: {q} "),
+            Lang::Ro => format!(" Playlisturi: {q} "),
         }
     }
 

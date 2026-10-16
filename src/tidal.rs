@@ -784,6 +784,16 @@ impl TidalDaemonClient {
         serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
     }
 
+    pub async fn search_playlists(&self, query: &str, limit: usize) -> Result<Vec<Playlist>> {
+        let v = self
+            .call(
+                "search_playlists",
+                serde_json::json!({"query": query, "limit": limit}),
+            )
+            .await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
     pub async fn get_playlist_tracks(&self, uuid: &str) -> Result<Vec<Track>> {
         let v = self
             .call("playlist_tracks", serde_json::json!({"uuid": uuid}))

@@ -21,6 +21,7 @@ use tokio::sync::mpsc::UnboundedSender;
 pub enum InputMode {
     Normal,
     Search,
+    Theme,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +42,7 @@ pub enum CollectionView {
 
 pub enum AppEvent {
     SearchDone(Result<Vec<Track>, String>),
+    ThemeSearchDone(Result<Vec<Playlist>, String>),
     StreamReady {
         track: Track,
         info: StreamInfo,
@@ -231,6 +233,9 @@ pub struct App {
     pub fav_albums: Vec<FavAlbum>,
     pub fav_album_selected: usize,
     pub collection_view: CollectionView,
+    /// Query behind the last theme search; `Some` while `self.playlists`
+    /// holds theme search results (cleared on library reload).
+    pub theme_query: Option<String>,
 
     pub lang: Lang,
     pub quality: Quality,
@@ -296,6 +301,7 @@ impl App {
             fav_albums: Vec::new(),
             fav_album_selected: 0,
             collection_view: CollectionView::Tracks,
+            theme_query: None,
             lang: Lang::Fr,
             quality: Quality::Lossless,
             shuffle: false,
@@ -340,6 +346,25 @@ impl App {
                 self.loading = false;
             }
             AppEvent::SearchDone(Err(e)) => {
+                self.status_msg = self.lang.search_error(&e);
+                self.loading = false;
+            }
+            AppEvent::ThemeSearchDone(Ok(playlists)) => {
+                self.status_msg = if playlists.is_empty() {
+                    self.lang.strings().status_no_results.to_string()
+                } else {
+                    self.lang
+                        .theme_results_count(playlists.len(), &self.search_input)
+                };
+                self.theme_query = Some(self.search_input.clone());
+                self.playlists = playlists;
+                self.mixes.clear();
+                self.library_selected = 0;
+                self.collection_view = CollectionView::Tracks;
+                self.active_tab = Tab::Library;
+                self.loading = false;
+            }
+            AppEvent::ThemeSearchDone(Err(e)) => {
                 self.status_msg = self.lang.search_error(&e);
                 self.loading = false;
             }
@@ -655,6 +680,30 @@ impl App {
         });
     }
 
+    /// Search editorial playlists matching a musical theme/genre ("trip hop",
+    /// "classical"...). Results land in `self.playlists` on the Library tab.
+    pub fn do_theme_search_bg(&mut self) {
+        if !self.authenticated {
+            self.status_msg = self.lang.strings().status_login_required.to_string();
+            return;
+        }
+        if self.search_input.is_empty() {
+            return;
+        }
+        self.loading = true;
+        self.status_msg = self.lang.searching_theme(&self.search_input);
+        let tx = self.tx();
+        let query = self.search_input.clone();
+        let tidal = self.tidal.clone();
+        tokio::spawn(async move {
+            let result = tidal
+                .search_playlists(&query, 20)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::ThemeSearchDone(result));
+        });
+    }
+
     pub fn add_selected_to_queue(&mut self) {
         if !self.authenticated {
             self.status_msg = self.lang.strings().status_login_required_short.to_string();
@@ -880,6 +929,7 @@ impl App {
         if !self.authenticated {
             return;
         }
+        self.theme_query = None;
         self.loading = true;
         self.status_msg = self.lang.strings().status_loading_lib.to_string();
         let tx = self.tx();

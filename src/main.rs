@@ -125,9 +125,9 @@ fn main() -> Result<()> {
                 rt.block_on(async_main(app_tx, event_rx, app_status))
             })?;
         media_macos::run_main_thread_loop(api_status, event_tx, done);
-        return handle
+        handle
             .join()
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("app thread panicked")));
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("app thread panicked")))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -276,7 +276,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                         } else {
                             match app.input_mode {
                                 InputMode::Normal => handle_normal(key.code, app),
-                                InputMode::Search => handle_search(key.code, app),
+                                InputMode::Search => {
+                                    handle_text_input(key.code, app, App::do_search_bg)
+                                }
+                                InputMode::Theme => {
+                                    handle_text_input(key.code, app, App::do_theme_search_bg)
+                                }
                             }
                         }
                     }
@@ -329,6 +334,11 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         KeyCode::Char('/') | KeyCode::Char('s') => {
             app.input_mode = InputMode::Search;
             app.search_input.clear();
+        }
+        KeyCode::Char('g') => {
+            app.input_mode = InputMode::Theme;
+            app.search_input.clear();
+            app.active_tab = Tab::Library;
         }
         KeyCode::Char('l') | KeyCode::Char('L') => {
             if !app.authenticated {
@@ -415,14 +425,16 @@ fn handle_normal(key: KeyCode, app: &mut App) {
     }
 }
 
-fn handle_search(key: KeyCode, app: &mut App) {
+/// Shared text-input handling for `InputMode::Search` and `InputMode::Theme`;
+/// `on_enter` is the background task to launch on Enter.
+fn handle_text_input(key: KeyCode, app: &mut App, on_enter: fn(&mut App)) {
     match key {
         KeyCode::Esc => {
             app.input_mode = InputMode::Normal;
         }
         KeyCode::Enter => {
             app.input_mode = InputMode::Normal;
-            app.do_search_bg();
+            on_enter(app);
         }
         KeyCode::Backspace => {
             app.search_input.pop();

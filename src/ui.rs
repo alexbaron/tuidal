@@ -747,6 +747,7 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
             hint_key("1/2/3", s.hint_quality),
             hint_key("q", s.hint_quit),
             hint_key("i", s.hint_library),
+            hint_key("g", s.hint_theme),
             hint_key("F", s.hint_fav_tracks),
             hint_key("A", s.hint_fav_albums),
             hint_key("Alt+L", s.hint_lang),
@@ -1043,7 +1044,70 @@ fn draw_effects_tab(f: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
+/// Theme-search prompt shown at the top of the Library tab while typing a
+/// theme (`InputMode::Theme`) and kept afterwards — muted — while the list
+/// displays results for `app.theme_query`.
+fn draw_theme_prompt(f: &mut Frame, app: &App, area: Rect) {
+    let active = app.input_mode == InputMode::Theme;
+    let text = if active {
+        app.search_input.as_str()
+    } else {
+        app.theme_query.as_deref().unwrap_or("")
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "g ",
+                Style::default()
+                    .fg(if active { ACCENT } else { MUTED })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(text, Style::default().fg(TEXT)),
+            if active {
+                Span::styled(
+                    "▎",
+                    Style::default()
+                        .fg(ACCENT)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                )
+            } else {
+                Span::raw("")
+            },
+            if text.is_empty() {
+                Span::styled(
+                    app.lang.strings().theme_placeholder,
+                    Style::default().fg(DIM),
+                )
+            } else {
+                Span::raw("")
+            },
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if active { ACCENT } else { DIM }))
+                .padding(Padding::horizontal(1)),
+        ),
+        area,
+    );
+}
+
 fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
+    // Split off the theme prompt when typing a theme or when the list below
+    // shows the results of a previous theme search.
+    let show_prompt = app.input_mode == InputMode::Theme || app.theme_query.is_some();
+    let area = if show_prompt {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(area);
+        draw_theme_prompt(f, app, chunks[0]);
+        chunks[1]
+    } else {
+        area
+    };
+
     // Si on est en vue albums favoris
     //if app.collection_view == app::CollectionView::Albums {
     if app.collection_view == CollectionView::Albums {
@@ -1175,8 +1239,12 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(DIM))
                 .title(Span::styled(
-                    app.lang
-                        .library_title_with_counts(app.playlists.len(), app.mixes.len()),
+                    match &app.theme_query {
+                        Some(q) => app.lang.theme_results_title(q),
+                        None => app
+                            .lang
+                            .library_title_with_counts(app.playlists.len(), app.mixes.len()),
+                    },
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                 )),
         )

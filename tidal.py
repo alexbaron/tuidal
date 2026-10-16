@@ -6,6 +6,7 @@ Modes :
   python3 tidal.py --daemon                       (mode persistant JSON-RPC)
   python3 tidal.py auth start|poll
   python3 tidal.py search "Daft Punk"
+  python3 tidal.py search_playlists "trip hop"
   python3 tidal.py stream 12345 [quality]
   python3 tidal.py cover 12345
   python3 tidal.py playlists
@@ -264,19 +265,25 @@ def handle_lyrics(session, track_id):
     return {"trackId": track_id, "lyrics": lyrics.text, "subtitles": lyrics.subtitles}
 
 
+def _playlist_dict(p):
+    return {
+        "uuid":             str(p.id),
+        "title":            p.name,
+        "numberOfTracks":   p.num_tracks or 0,
+        "duration":         p.duration or 0,
+        "type":             str(getattr(p, 'type', 'USER')),
+        "publicPlaylist":   getattr(p, 'public', False),
+    }
+
+
 def handle_playlists(session):
-    playlists = session.user.playlists()
-    result = []
-    for p in playlists:
-        result.append({
-            "uuid":             str(p.id),
-            "title":            p.name,
-            "numberOfTracks":   p.num_tracks,
-            "duration":         p.duration or 0,
-            "type":             str(getattr(p, 'type', 'USER')),
-            "publicPlaylist":   getattr(p, 'public', False),
-        })
-    return result
+    return [_playlist_dict(p) for p in session.user.playlists()]
+
+
+def handle_search_playlists(session, query, limit=20):
+    results = session.search(query, [tidalapi.Playlist], limit=limit)
+    playlists = results.get("playlists", []) or []
+    return [_playlist_dict(p) for p in playlists[:limit]]
 
 
 def handle_playlist_tracks(session, uuid):
@@ -339,6 +346,7 @@ HANDLERS = {
     "cover":          handle_cover,
     "lyrics":         handle_lyrics,
     "playlists":      handle_playlists,
+    "search_playlists": handle_search_playlists,
     "playlist_tracks": handle_playlist_tracks,
     "mixes":          handle_mixes,
     "mix_tracks":     handle_mix_tracks,
@@ -445,6 +453,17 @@ def cli_search(query, limit=20):
         return
     try:
         out(handle_search(session, query, limit))
+    except Exception as e:
+        out({"error": str(e)})
+
+
+def cli_search_playlists(query, limit=20):
+    session = open_session()
+    if not session.check_login():
+        out({"error": "Non authentifié"})
+        return
+    try:
+        out(handle_search_playlists(session, query, limit))
     except Exception as e:
         out({"error": str(e)})
 
@@ -581,6 +600,8 @@ if __name__ == "__main__":
             cli_search(query)
         case ["search", query, limit]:
             cli_search(query, int(limit))
+        case ["search_playlists", query]:
+            cli_search_playlists(query)
         case ["stream", track_id]:
             cli_stream(int(track_id))
         case ["stream", track_id, quality]:

@@ -29,6 +29,7 @@ A terminal music player for Tidal, built with Rust and ratatui. Streams lossless
 - 📈 Real-time audio spectrum (FFT) tab
 - 🖼️ Optional background image behind the spectrum (album cover or random wallhaven.cc wallpaper): true under-the-text background on kitty; on Sixel/iTerm2 the spectrum is composited into the image (lower frame rate, Sixel slower)
 - 🎛️ Effects tab: 10-band equalizer with presets, balance, bass/treble, stereo width, crossfeed, echo, compressor, volume normalization (requires mpv)
+- 🎼 Theme search — find editorial playlists by genre or mood (trip hop, classical, lofi…)
 - 🎛️ System media controls — MPRIS on Linux (playerctl, GNOME, polybar…), media keys / Control Center / Now Playing on macOS
 
 ---
@@ -214,6 +215,7 @@ cargo run
 | `+` / `-` | Volume up / down |
 | `Tab` | Cycle tabs (Search → Queue → Now → Spectrum → Effects → Library) |
 | `i` | Load library (on Library tab) |
+| `g` | Search playlists by musical theme (e.g. trip hop, classical) |
 | `j` / `k` or `↓` / `↑` | Navigate list |
 | `1` | Quality: HiRes FLAC 24bit |
 | `2` | Quality: FLAC 16bit/44.1kHz |
