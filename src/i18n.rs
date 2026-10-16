@@ -1,4 +1,4 @@
-use crate::app::SpectrumStyle;
+use crate::app::{LayoutMode, SpectrumStyle};
 use crate::kitty_bg::SpectrumBg;
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -52,6 +52,8 @@ pub struct Strings {
     pub hint_library: &'static str,
     pub hint_theme: &'static str,
     pub hint_filter: &'static str,
+    pub hint_panes: &'static str,
+    pub hint_layout: &'static str,
     pub hint_fav_tracks: &'static str,
     pub hint_fav_albums: &'static str,
     pub hint_lang: &'static str,
@@ -153,6 +155,8 @@ static FR: Strings = Strings {
     hint_library: "bibliothèque",
     hint_theme: "thème",
     hint_filter: "filtrer",
+    hint_panes: "volets",
+    hint_layout: "disposition",
     hint_fav_tracks: "titres fav",
     hint_fav_albums: "albums fav",
     hint_lang: "langue",
@@ -247,6 +251,8 @@ static EN: Strings = Strings {
     hint_library: "library",
     hint_theme: "theme",
     hint_filter: "filter",
+    hint_panes: "panes",
+    hint_layout: "layout",
     hint_fav_tracks: "fav tracks",
     hint_fav_albums: "fav albums",
     hint_lang: "language",
@@ -341,6 +347,8 @@ static DE: Strings = Strings {
     hint_library: "Bibliothek",
     hint_theme: "Genre",
     hint_filter: "filtern",
+    hint_panes: "Bereiche",
+    hint_layout: "Layout",
     hint_fav_tracks: "Fav-Titel",
     hint_fav_albums: "Fav-Alben",
     hint_lang: "Sprache",
@@ -435,6 +443,8 @@ static RO: Strings = Strings {
     hint_library: "bibliotecă",
     hint_theme: "temă",
     hint_filter: "filtrează",
+    hint_panes: "panouri",
+    hint_layout: "aspect",
     hint_fav_tracks: "piese fav",
     hint_fav_albums: "albume fav",
     hint_lang: "limbă",
@@ -762,6 +772,38 @@ impl Lang {
             (Lang::En, SpectrumStyle::Bars) => "bars",
             (Lang::De, SpectrumStyle::Bars) => "Balken",
             (Lang::Ro, SpectrumStyle::Bars) => "bare",
+        }
+    }
+
+    /// Short label for a LayoutMode ("split", "tabs").
+    pub fn layout_label(self, layout: LayoutMode) -> &'static str {
+        match (self, layout) {
+            (Lang::Fr, LayoutMode::Split) => "vue partagée",
+            (Lang::Fr, LayoutMode::Tabs) => "onglets",
+            (Lang::En, LayoutMode::Split) => "split view",
+            (Lang::En, LayoutMode::Tabs) => "tabs",
+            (Lang::De, LayoutMode::Split) => "geteilte Ansicht",
+            (Lang::De, LayoutMode::Tabs) => "Tabs",
+            (Lang::Ro, LayoutMode::Split) => "vedere împărțită",
+            (Lang::Ro, LayoutMode::Tabs) => "file",
+        }
+    }
+
+    pub fn layout_changed(self, label: &str) -> String {
+        match self {
+            Lang::Fr => format!("Disposition : {label}"),
+            Lang::En => format!("Layout: {label}"),
+            Lang::De => format!("Layout: {label}"),
+            Lang::Ro => format!("Aspect: {label}"),
+        }
+    }
+
+    pub fn queue_title_with_totals(self, n: usize, total: &str) -> String {
+        match self {
+            Lang::Fr => format!("File d'attente ({n} · {total})"),
+            Lang::En => format!("Queue ({n} · {total})"),
+            Lang::De => format!("Warteschlange ({n} · {total})"),
+            Lang::Ro => format!("Coadă ({n} · {total})"),
         }
     }
 

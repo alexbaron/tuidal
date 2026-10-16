@@ -362,11 +362,26 @@ fn handle_normal(key: KeyCode, app: &mut App) {
                 app.filter_clear();
             }
         }
-        KeyCode::Char('l') | KeyCode::Char('L') => {
+        KeyCode::Char('h') => {
+            if app.split_active(app.body_width) {
+                app.active_tab = Tab::Search;
+                app.filter_clear();
+            }
+        }
+        KeyCode::Char('l') => {
+            if app.split_active(app.body_width) {
+                app.active_tab = Tab::Queue;
+                app.filter_clear();
+            } else if !app.authenticated {
+                app.start_login_bg();
+            }
+        }
+        KeyCode::Char('L') => {
             if !app.authenticated {
                 app.start_login_bg();
             }
         }
+        KeyCode::Char('S') => app.cycle_layout(),
         KeyCode::Char('i') => {
             if app.authenticated {
                 app.load_library_bg();

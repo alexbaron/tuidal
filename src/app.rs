@@ -42,6 +42,15 @@ pub enum SpectrumStyle {
     Bars,
 }
 
+/// Main-area layout: side-by-side Search|Queue panes, or one tab at a time.
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LayoutMode {
+    #[default]
+    Split,
+    Tabs,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
     Search,
@@ -232,7 +241,14 @@ pub struct App {
     pub search_results: Vec<Track>,
     pub queue: Vec<Track>,
 
-    pub selected: usize,
+    /// Selection in the Search results list.
+    pub search_selected: usize,
+    /// Selection in the Queue list.
+    pub queue_selected: usize,
+    /// Main layout (split panes vs tabs).
+    pub layout: LayoutMode,
+    /// Body width written by draw_body each frame (for split_active()).
+    pub body_width: u16,
     pub queue_index: Option<usize>,
 
     pub authenticated: bool,
@@ -324,7 +340,10 @@ impl App {
             search_input: String::new(),
             search_results: Vec::new(),
             queue: Vec::new(),
-            selected: 0,
+            search_selected: 0,
+            queue_selected: 0,
+            layout: LayoutMode::default(),
+            body_width: 0,
             queue_index: None,
             authenticated: false,
             status_msg: String::new(),
@@ -408,7 +427,7 @@ impl App {
                         };
                         self.last_search_query = Some(query);
                         self.search_results = results;
-                        self.selected = 0;
+                        self.search_selected = 0;
                         self.active_tab = Tab::Search;
                         self.loading = false;
                         self.filter_clear();
@@ -632,20 +651,22 @@ impl App {
             AppEvent::PlaylistTracksLoaded(tracks) => {
                 self.queue = tracks;
                 self.queue_index = None;
-                self.selected = 0;
+                self.queue_selected = 0;
                 self.active_tab = Tab::Queue;
                 self.loading = false;
                 self.status_msg = self.lang.tracks_loaded(self.queue.len());
                 self.filter_clear();
+                self.clamp_selections();
             }
             AppEvent::FavTracksLoaded(tracks) => {
                 self.queue = tracks;
                 self.queue_index = None;
-                self.selected = 0;
+                self.queue_selected = 0;
                 self.active_tab = Tab::Queue;
                 self.loading = false;
                 self.status_msg = self.lang.fav_tracks_loaded(self.queue.len());
                 self.filter_clear();
+                self.clamp_selections();
             }
             AppEvent::FavAlbumsLoaded(albums) => {
                 self.fav_albums = albums;
@@ -838,7 +859,7 @@ impl App {
             self.status_msg = self.lang.strings().status_login_required_short.to_string();
             return;
         }
-        let Some(idx) = self.resolve_index(self.selected) else {
+        let Some(idx) = self.resolve_index(self.selected()) else {
             return;
         };
         let track = match self.active_tab {
@@ -860,7 +881,7 @@ impl App {
             self.status_msg = self.lang.strings().status_login_required_short.to_string();
             return;
         }
-        let Some(idx) = self.resolve_index(self.selected) else {
+        let Some(idx) = self.resolve_index(self.selected()) else {
             return;
         };
         let track = match self.active_tab {
@@ -1167,8 +1188,52 @@ impl App {
                 Tab::Search
             }
         };
-        self.selected = 0;
+        // Keep the per-pane selections: switching tabs/panes no longer
+        // resets them.
         self.filter_clear();
+    }
+
+    /// Selection index of the list for the active tab.
+    pub fn selected(&self) -> usize {
+        match self.active_tab {
+            Tab::Queue => self.queue_selected,
+            _ => self.search_selected,
+        }
+    }
+
+    /// Mutable access to the selection of the active tab.
+    pub fn selected_mut(&mut self) -> &mut usize {
+        match self.active_tab {
+            Tab::Queue => &mut self.queue_selected,
+            _ => &mut self.search_selected,
+        }
+    }
+
+    /// Keep both selections inside their lists after a mutation.
+    fn clamp_selections(&mut self) {
+        if self.search_selected >= self.search_results.len() {
+            self.search_selected = self.search_results.len().saturating_sub(1);
+        }
+        if self.queue_selected >= self.queue.len() {
+            self.queue_selected = self.queue.len().saturating_sub(1);
+        }
+    }
+
+    /// Split view is active on Search/Queue when the terminal is wide enough.
+    pub fn split_active(&self, width: u16) -> bool {
+        self.layout == LayoutMode::Split
+            && width >= 100
+            && matches!(self.active_tab, Tab::Search | Tab::Queue)
+    }
+
+    /// Toggle split panes vs single-tab layout (key `S`).
+    pub fn cycle_layout(&mut self) {
+        self.layout = match self.layout {
+            LayoutMode::Split => LayoutMode::Tabs,
+            LayoutMode::Tabs => LayoutMode::Split,
+        };
+        self.status_msg = self.lang.layout_changed(self.lang.layout_label(self.layout));
+        self.save_settings();
     }
 
     pub fn current_list_len(&self) -> usize {
@@ -1276,7 +1341,7 @@ impl App {
             &self.filter_input,
             haystack.iter().map(String::as_str),
         ));
-        self.selected = 0;
+        *self.selected_mut() = 0;
         self.library_selected = 0;
         self.fav_album_selected = 0;
     }
@@ -1296,17 +1361,17 @@ impl App {
     pub fn next_track(&mut self) {
         let len = self.current_list_len();
         if len > 0 {
-            self.selected = (self.selected + 1) % len;
+            *self.selected_mut() = (self.selected() + 1) % len;
         }
     }
 
     pub fn prev_track(&mut self) {
         let len = self.current_list_len();
         if len > 0 {
-            self.selected = if self.selected == 0 {
+            *self.selected_mut() = if self.selected() == 0 {
                 len - 1
             } else {
-                self.selected - 1
+                self.selected() - 1
             };
         }
     }
@@ -1871,6 +1936,7 @@ impl App {
             spectrum_style: self.spectrum_style,
             wallhaven_query: self.wallhaven_query.clone(),
             search_limit: self.search_limit,
+            layout: self.layout,
         };
         let path = settings_path();
         if let Some(parent) = path.parent() {
@@ -1896,6 +1962,7 @@ impl App {
                 self.spectrum_style = settings.spectrum_style;
                 self.wallhaven_query = settings.wallhaven_query;
                 self.search_limit = settings.search_limit;
+                self.layout = settings.layout;
             }
         }
     }
@@ -1931,6 +1998,8 @@ struct Settings {
     wallhaven_query: String,
     #[serde(default = "default_search_limit")]
     search_limit: usize,
+    #[serde(default)]
+    layout: LayoutMode,
 }
 
 fn default_spectrum_bg() -> SpectrumBg {

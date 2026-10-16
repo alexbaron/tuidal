@@ -67,6 +67,8 @@ pub struct CavaCore {
     lower_cut_off: Vec<usize>,
     upper_cut_off: Vec<usize>,
     eq: Vec<f64>,
+    /// Kept for upstream parity (used by cut_off_frequencies()).
+    #[allow(dead_code)]
     cut_off_frequency: Vec<f32>,
     bar_freqs: Vec<f32>,
     bass_cut_off_bar: usize,
@@ -283,6 +285,8 @@ impl CavaCore {
         self.framerate
     }
 
+    /// Cut-off edges (n+1 values), kept for parity with upstream.
+    #[allow(dead_code)]
     pub fn cut_off_frequencies(&self) -> &[f32] {
         &self.cut_off_frequency
     }

@@ -501,7 +501,7 @@ impl SpectrumAnalyzer {
         }
         // Diagnostic trace (TUIDAL_BG_DEBUG=1): one line every ~20 updates.
         self.debug_counter = self.debug_counter.wrapping_add(1);
-        if self.debug_counter % 20 == 0 {
+        if self.debug_counter.is_multiple_of(20) {
             let max = self.bands.iter().cloned().fold(0.0f32, f32::max);
             let full = self.bands.iter().filter(|v| **v >= 0.99).count();
             let peak_in = buf.samples[self.fed_until.saturating_sub(new_count)..self.fed_until]

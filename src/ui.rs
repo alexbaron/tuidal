@@ -150,6 +150,11 @@ fn tab_span<'a>(label: &'a str, tab: Tab, active: &Tab) -> Span<'a> {
 fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     // Only the Visualizer tab fills this in; reset it for other tabs.
     app.spectrum_area = None;
+    app.body_width = area.width;
+    if app.split_active(area.width) {
+        draw_split_view(f, app, area);
+        return;
+    }
     match app.active_tab {
         Tab::Search => draw_search_tab(f, app, area),
         Tab::Queue => draw_queue_tab(f, app, area),
@@ -236,6 +241,132 @@ fn filtered_tracks(
     }
 }
 
+/// Build the ListCtx the track lists need from `&App`.
+fn list_ctx(app: &App) -> ListCtx {
+    ListCtx {
+        lang: app.lang,
+        loading: app.loading,
+        authenticated: app.authenticated,
+        now_playing_id: app.queue_index.and_then(|i| app.queue.get(i)).map(|t| t.id),
+    }
+}
+
+/// Total duration of the queue in seconds.
+fn queue_total_secs(app: &App) -> u64 {
+    app.queue.iter().map(|t| t.duration).sum()
+}
+
+/// Format seconds as "m:ss" (or "h:mm:ss" past the hour), like duration_str.
+fn fmt_duration(secs: u64) -> String {
+    if secs >= 3600 {
+        format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+    } else {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    }
+}
+
+/// Split view: Search pane (left, 60%) + Queue pane (right, 40%).
+/// The pane matching `active_tab` gets ACCENT borders/title; the fuzzy
+/// filter bar only shows inside the focused pane.
+fn draw_split_view(f: &mut Frame, app: &App, area: Rect) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+    let (left, right) = (cols[0], cols[1]);
+    let show_filter = app.input_mode == InputMode::Filter || app.filter_matches.is_some();
+    let search_focused = app.active_tab == Tab::Search;
+    let ctx = list_ctx(app);
+
+    // ── Left: search prompt (+ optional filter bar) + results ──────────
+    let mut lcons = vec![Constraint::Length(3)];
+    if show_filter && search_focused {
+        lcons.push(Constraint::Length(3));
+    }
+    lcons.push(Constraint::Min(0));
+    let lrows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(lcons)
+        .split(left);
+    let l_list = *lrows.last().unwrap();
+    if show_filter && search_focused {
+        draw_filter_bar(f, app, lrows[1], app.search_results.len());
+    }
+    draw_search_prompt_widget(f, app, lrows[0]);
+
+    let (tracks, hl) = filtered_tracks(app, &app.search_results);
+    draw_track_list(
+        f, &ctx, l_list, &tracks, app.search_selected,
+        app.lang.strings().search_results_title,
+        hl.as_deref(), search_focused, true,
+    );
+
+    // ── Right: optional filter bar + queue list ────────────────────────
+    let mut rcons: Vec<Constraint> = Vec::new();
+    if show_filter && !search_focused {
+        rcons.push(Constraint::Length(3));
+    }
+    rcons.push(Constraint::Min(0));
+    let rrows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(rcons)
+        .split(right);
+    let r_list = *rrows.last().unwrap();
+    if show_filter && !search_focused {
+        draw_filter_bar(f, app, rrows[0], app.queue.len());
+    }
+    let (qtracks, qhl) = filtered_tracks(app, &app.queue);
+    let qtitle = app
+        .lang
+        .queue_title_with_totals(app.queue.len(), &fmt_duration(queue_total_secs(app)));
+    draw_track_list(
+        f, &ctx, r_list, &qtracks, app.queue_selected, &qtitle,
+        qhl.as_deref(), !search_focused, true,
+    );
+}
+
+/// The "/ " search prompt (same rendering as the top of the Search tab),
+/// shared between `draw_search_tab` and `draw_split_view`.
+fn draw_search_prompt_widget(f: &mut Frame, app: &App, area: Rect) {
+    let is_searching = app.input_mode == InputMode::Search;
+    f.render_widget(search_prompt_paragraph(app, is_searching), area);
+}
+
+/// Build the Paragraph used for the search prompt.
+fn search_prompt_paragraph(app: &App, is_searching: bool) -> Paragraph<'static> {
+    Paragraph::new(Line::from(vec![
+        Span::styled(
+            "/ ",
+            Style::default()
+                .fg(if is_searching { ACCENT } else { MUTED })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(app.search_input.clone(), Style::default().fg(TEXT)),
+        if is_searching {
+            Span::styled("▎", Style::default().fg(ACCENT).add_modifier(Modifier::SLOW_BLINK))
+        } else {
+            Span::raw("")
+        },
+        if is_searching && app.live_search_in_flight {
+            Span::styled(" ⟳", Style::default().fg(MUTED))
+        } else {
+            Span::raw("")
+        },
+        if app.search_input.is_empty() && !is_searching {
+            Span::styled(app.lang.strings().search_placeholder, Style::default().fg(DIM))
+        } else {
+            Span::raw("")
+        },
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(if is_searching { ACCENT } else { DIM }))
+            .padding(Padding::horizontal(1)),
+    )
+}
+
 fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
     let show_filter = app.input_mode == InputMode::Filter || app.filter_matches.is_some();
     let constraints: Vec<Constraint> = if show_filter {
@@ -257,58 +388,19 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let is_searching = app.input_mode == InputMode::Search;
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "/ ",
-                Style::default()
-                    .fg(if is_searching { ACCENT } else { MUTED })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(app.search_input.as_str(), Style::default().fg(TEXT)),
-            if is_searching {
-                Span::styled(
-                    "▎",
-                    Style::default()
-                        .fg(ACCENT)
-                        .add_modifier(Modifier::SLOW_BLINK),
-                )
-            } else {
-                Span::raw("")
-            },
-            if is_searching && app.live_search_in_flight {
-                Span::styled(" ⟳", Style::default().fg(MUTED))
-            } else {
-                Span::raw("")
-            },
-            if app.search_input.is_empty() && !is_searching {
-                Span::styled(
-                    app.lang.strings().search_placeholder,
-                    Style::default().fg(DIM),
-                )
-            } else {
-                Span::raw("")
-            },
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if is_searching { ACCENT } else { DIM }))
-                .padding(Padding::horizontal(1)),
-        ),
-        chunks[0],
-    );
+    f.render_widget(search_prompt_paragraph(app, is_searching), chunks[0]);
 
     let (tracks, highlights) = filtered_tracks(app, &app.search_results);
     draw_track_list(
         f,
-        app,
+        &list_ctx(app),
         list_area,
         &tracks,
-        app.selected,
+        app.search_selected,
         app.lang.strings().search_results_title,
         highlights.as_deref(),
+        true,
+        false,
     );
 }
 
@@ -327,12 +419,14 @@ fn draw_queue_tab(f: &mut Frame, app: &App, area: Rect) {
     let (tracks, highlights) = filtered_tracks(app, &app.queue);
     draw_track_list(
         f,
-        app,
+        &list_ctx(app),
         list_area,
         &tracks,
-        app.selected,
+        app.queue_selected,
         app.lang.strings().queue_title,
         highlights.as_deref(),
+        true,
+        false,
     );
 }
 
@@ -614,20 +708,32 @@ fn hit_style() -> Style {
     Style::default().fg(GOLD).add_modifier(Modifier::BOLD)
 }
 
+/// Everything a track list needs that used to come from `&App`, so the
+/// split panes (and tests) can render without an App.
+pub(crate) struct ListCtx {
+    pub lang: crate::i18n::Lang,
+    pub loading: bool,
+    pub authenticated: bool,
+    pub now_playing_id: Option<u64>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_track_list(
     f: &mut Frame,
-    app: &App,
+    ctx: &ListCtx,
     area: Rect,
     tracks: &[crate::tidal::Track],
     selected: usize,
     title: &str,
     highlights: Option<&[Vec<u32>]>,
+    focused: bool,
+    compact: bool,
 ) {
-    let s = app.lang.strings();
+    let s = ctx.lang.strings();
     if tracks.is_empty() {
-        let msg = if app.loading {
+        let msg = if ctx.loading {
             s.loading
-        } else if !app.authenticated {
+        } else if !ctx.authenticated {
             s.not_authenticated
         } else {
             s.no_results_hint
@@ -637,10 +743,10 @@ fn draw_track_list(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(DIM))
+                    .border_style(Style::default().fg(if focused { ACCENT } else { DIM }))
                     .title(Span::styled(
                         format!(" {title} "),
-                        Style::default().fg(MUTED),
+                        Style::default().fg(if focused { ACCENT } else { MUTED }),
                     ))
                     .padding(Padding::new(1, 1, 1, 0)),
             ),
@@ -649,7 +755,7 @@ fn draw_track_list(
         return;
     }
 
-    let now_playing_id = app.queue_index.and_then(|i| app.queue.get(i)).map(|t| t.id);
+    let now_playing_id = ctx.now_playing_id;
 
     let rows: Vec<Row> = tracks
         .iter()
@@ -735,22 +841,28 @@ fn draw_track_list(
             ];
             title_line.extend(title_spans);
 
-            Row::new(vec![
+            let mut cells = vec![
                 Cell::from(Span::styled(
                     format!("{:>3}", i + 1),
                     Style::default().fg(MUTED),
                 )),
                 Cell::from(Line::from(title_line)),
                 Cell::from(Line::from(artist_spans)),
-                Cell::from(Line::from(album_spans)),
-                Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
-            ])
+            ];
+            if !compact {
+                cells.push(Cell::from(Line::from(album_spans)));
+            }
+            cells.push(Cell::from(Span::styled(
+                t.duration_str(),
+                Style::default().fg(MUTED),
+            )));
+            Row::new(cells)
             .style(Style::default().bg(row_bg))
             .height(1)
         })
         .collect();
 
-    let header = Row::new(vec![
+    let mut header_cells = vec![
         Cell::from(Span::styled(
             "  #",
             Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
@@ -763,40 +875,55 @@ fn draw_track_list(
             s.col_artist,
             Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
         )),
-        Cell::from(Span::styled(
+    ];
+    if !compact {
+        header_cells.push(Cell::from(Span::styled(
             s.col_album,
             Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
-        )),
-        Cell::from(Span::styled(
-            s.col_duration,
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
-        )),
-    ])
-    .style(Style::default().bg(BG2))
-    .height(1);
+        )));
+    }
+    header_cells.push(Cell::from(Span::styled(
+        s.col_duration,
+        Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+    )));
+    let header = Row::new(header_cells)
+        .style(Style::default().bg(BG2))
+        .height(1);
+
+    let widths: Vec<Constraint> = if compact {
+        vec![
+            Constraint::Length(4),
+            Constraint::Min(10),
+            Constraint::Length(18),
+            Constraint::Length(6),
+        ]
+    } else {
+        vec![
+            Constraint::Length(4),
+            Constraint::Min(30),
+            Constraint::Length(24),
+            Constraint::Length(22),
+            Constraint::Length(6),
+        ]
+    };
 
     let mut state = ratatui::widgets::TableState::default();
     state.select(Some(selected));
     f.render_stateful_widget(
-        Table::new(
-            rows,
-            [
-                Constraint::Length(4),
-                Constraint::Min(30),
-                Constraint::Length(24),
-                Constraint::Length(22),
-                Constraint::Length(6),
-            ],
-        )
+        Table::new(rows, widths)
         .header(header)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(DIM))
+                .border_style(Style::default().fg(if focused { ACCENT } else { DIM }))
                 .title(Span::styled(
                     format!(" {title} ({}) ", tracks.len()),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    if focused {
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(MUTED)
+                    },
                 ))
                 .padding(Padding::ZERO),
         )
@@ -935,6 +1062,8 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
             hint_key("i", s.hint_library),
             hint_key("g", s.hint_theme),
             hint_key("f", s.hint_filter),
+            hint_key("h/l", s.hint_panes),
+            hint_key("S", s.hint_layout),
             hint_key("F", s.hint_fav_tracks),
             hint_key("A", s.hint_fav_albums),
             hint_key("Alt+L", s.hint_lang),
@@ -1946,5 +2075,63 @@ mod tests {
         );
         assert!(text.contains("Hz"), "expected Hz label in {text:?}");
         assert!(text.contains("kHz"), "expected kHz label in {text:?}");
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+    use crate::i18n::Lang;
+    use crate::tidal::{Album, Artist, Track};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn track(id: u64, title: &str, secs: u64) -> Track {
+        Track {
+            id,
+            title: title.to_string(),
+            duration: secs,
+            track_number: None,
+            artists: vec![Artist { id: 1, name: "A".into() }],
+            album: Album { id: 1, title: "Al".into() },
+            audio_quality: None,
+            explicit: None,
+        }
+    }
+
+    /// Split view: both panes must render side by side — search title in the
+    /// left half, queue title with totals in the right half.
+    #[test]
+    fn split_panes_render_both_titles() {
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let results = vec![track(1, "Trip Hop Treats", 200), track(2, "Massive Attack", 240)];
+        let queue = vec![track(3, "Q1", 100), track(4, "Q2", 200), track(5, "Q3", 120)];
+        let ctx = ListCtx { lang: Lang::En, loading: false, authenticated: true, now_playing_id: Some(3) };
+        term.draw(|f| {
+            let area = f.area();
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(area);
+            draw_track_list(f, &ctx, cols[0], &results, 0, "Results", None, true, true);
+            let qtitle = Lang::En.queue_title_with_totals(queue.len(), &fmt_duration(420));
+            draw_track_list(f, &ctx, cols[1], &queue, 0, &qtitle, None, false, true);
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        let mut left = String::new();
+        let mut right = String::new();
+        for y in 0..30u16 {
+            for x in 0..72u16 {
+                left.push_str(buf[(x, y)].symbol());
+            }
+            for x in 72..120u16 {
+                right.push_str(buf[(x, y)].symbol());
+            }
+        }
+        assert!(left.contains("Results"), "left pane missing title: {left:?}");
+        assert!(left.contains("Trip Hop Treats"), "left pane missing row");
+        assert!(right.contains("Queue (3 · 7:00)"), "queue totals missing: {right:?}");
+        assert!(right.contains("▶"), "now-playing marker missing: {right:?}");
     }
 }
