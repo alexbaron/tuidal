@@ -315,7 +315,7 @@ Rust TUI  ──subprocess──►  tidal.py  ──►  Tidal API
 (ratatui)                  (tidalapi)
 ```
 
-`tidal.py` handles all Tidal API calls and OAuth authentication via [tidalapi](https://github.com/EbbLabs/python-tidal). It communicates with the Rust process via stdin/stdout as JSON. This approach avoids dealing with Tidal's unofficial API credentials directly in Rust, and benefits from tidalapi's maintained session handling.
+`tidal.py` handles all Tidal API calls and OAuth authentication via [tidalapi](https://github.com/EbbLabs/python-tidal). It runs as a persistent daemon and communicates with the Rust process via stdin/stdout as JSON-RPC lines; API calls are served by a small thread pool, so replies can come back out of order (matched by `id`) and a slow search never delays the next track's stream URL. This approach avoids dealing with Tidal's unofficial API credentials directly in Rust, and benefits from tidalapi's maintained session handling.
 
 ---
 

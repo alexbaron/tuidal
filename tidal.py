@@ -31,6 +31,7 @@ import json
 import os
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tidalapi.user import ItemOrder, AlbumOrder, OrderDirection
 import requests
@@ -126,9 +127,15 @@ FALLBACK_CHAIN = {
 }
 
 
+_OUT_LOCK = threading.Lock()
+
+
 def out(data):
-    print(json.dumps(data, ensure_ascii=False))
-    sys.stdout.flush()
+    """Write one JSON line; locked because daemon workers answer concurrently."""
+    line = json.dumps(data, ensure_ascii=False)
+    with _OUT_LOCK:
+        print(line)
+        sys.stdout.flush()
 
 
 def make_session(quality=None, use_env=True) -> tidalapi.Session:
@@ -385,10 +392,29 @@ HANDLERS = {
 }
 
 
+# Concurrent API calls in the daemon. The Rust client matches replies by
+# `id`, so answers may come back out of order; this keeps a slow search from
+# delaying the stream URL of the next track.
+DAEMON_WORKERS = 4
+
+
+def run_handler(session, req_id, method, params):
+    """Run one HANDLERS call on a worker thread and write its reply."""
+    try:
+        if not call_with_reconnect(session, session.check_login):
+            out({"id": req_id, "error": "Non authentifié"})
+            return
+        handler = HANDLERS[method]
+        result = call_with_reconnect(session, lambda: handler(session, **params))
+        out({"id": req_id, "result": result})
+    except Exception as e:
+        out({"id": req_id, "error": str(e)})
+
+
 def run_daemon():
     quality = "LOSSLESS"
     session = open_session()
-    auth_in_progress = False
+    pool = ThreadPoolExecutor(max_workers=DAEMON_WORKERS, thread_name_prefix="tidal")
 
     for line in sys.stdin:
         line = line.strip()
@@ -406,6 +432,7 @@ def run_daemon():
 
         if method == "shutdown":
             out({"id": req_id, "result": {"ok": True}})
+            pool.shutdown(wait=False, cancel_futures=True)
             break
 
         try:
@@ -434,16 +461,11 @@ def run_daemon():
                 out({"id": req_id, "result": {"ok": True}})
 
             elif method in HANDLERS:
-                if not call_with_reconnect(session, session.check_login):
-                    out({"id": req_id, "error": "Non authentifié"})
-                    continue
-                handler = HANDLERS[method]
+                # auth_* and set_quality stay on this thread (they mutate
+                # `session`/`quality`); API calls run concurrently.
                 if method == "stream" and "quality" not in params:
                     params["quality"] = quality
-                result = call_with_reconnect(
-                    session, lambda: handler(session, **params)
-                )
-                out({"id": req_id, "result": result})
+                pool.submit(run_handler, session, req_id, method, params)
 
             else:
                 out({"id": req_id, "error": f"Méthode inconnue : {method}"})
