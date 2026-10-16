@@ -189,6 +189,7 @@ pub struct ApiStatus {
     pub track_id: Option<u64>,
     pub queue: Vec<Track>,
     pub queue_index: Option<usize>,
+    pub cover_url: Option<String>,
 }
 
 pub struct App {
@@ -1093,6 +1094,7 @@ impl App {
             authenticated: self.authenticated,
             queue: self.queue.clone(),
             queue_index: self.queue_index,
+            cover_url: self.cover_info.as_ref().map(|c| c.url.clone()),
         }
     }
 

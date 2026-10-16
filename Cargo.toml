@@ -22,3 +22,8 @@ zbus  = "5"
 symphonia = { version = "0.5", features = ["isomp4", "aac"] }
 rustfft   = "6"
 base64    = "0.22"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+souvlaki = "0.8.3"   # media keys / Control Center / Now Playing
+cocoa    = "0.24"    # AppKit run loop on the main thread (souvlaki dep too)
+objc     = "0.2"

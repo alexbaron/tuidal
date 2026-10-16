@@ -121,6 +121,12 @@ impl MprisPlayer {
                 zbus::zvariant::Value::new((dur as i64) * 1_000_000),
             );
         }
+        if let Some(ref url) = s.cover_url {
+            map.insert(
+                "mpris:artUrl".into(),
+                zbus::zvariant::Value::new(url.clone()),
+            );
+        }
 
         map
     }
@@ -337,6 +343,7 @@ pub async fn start_mpris_server(status: Arc<RwLock<ApiStatus>>, tx: UnboundedSen
     let mut prev_album: Option<String> = None;
     let mut prev_duration: Option<u64> = None;
     let mut prev_track_id: Option<u64> = None;
+    let mut prev_cover_url: Option<String> = None;
     let mut prev_volume = 0u8;
     let mut prev_repeat = RepeatMode::Off;
     let mut prev_shuffle = false;
@@ -347,7 +354,7 @@ pub async fn start_mpris_server(status: Arc<RwLock<ApiStatus>>, tx: UnboundedSen
     loop {
         interval.tick().await;
 
-        let (state, volume, repeat, shuffle, title, artist, album, duration, track_id) = {
+        let (state, volume, repeat, shuffle, title, artist, album, duration, track_id, cover_url) = {
             let cur = status.read().unwrap();
             (
                 cur.state.clone(),
@@ -359,6 +366,7 @@ pub async fn start_mpris_server(status: Arc<RwLock<ApiStatus>>, tx: UnboundedSen
                 cur.album.clone(),
                 cur.duration,
                 cur.track_id,
+                cur.cover_url.clone(),
             )
         };
 
@@ -387,12 +395,14 @@ pub async fn start_mpris_server(status: Arc<RwLock<ApiStatus>>, tx: UnboundedSen
             || album != prev_album
             || duration != prev_duration
             || track_id != prev_track_id
+            || cover_url != prev_cover_url
         {
             prev_title = title;
             prev_artist = artist;
             prev_album = album;
             prev_duration = duration;
             prev_track_id = track_id;
+            prev_cover_url = cover_url;
             let _ = player.metadata_changed(&ctxt).await;
         }
     }

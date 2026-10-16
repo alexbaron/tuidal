@@ -4,6 +4,8 @@ mod audio_fx;
 mod composite_bg;
 mod i18n;
 mod kitty_bg;
+#[cfg(target_os = "macos")]
+mod media_macos;
 mod mpris;
 mod player;
 mod spectrum;
@@ -23,6 +25,8 @@ use std::{
     sync::{Arc, RwLock},
     time::Duration,
 };
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
@@ -85,8 +89,61 @@ fn build_picker() -> Option<ratatui_image::picker::Picker> {
     picker
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
+    let api_status = Arc::new(RwLock::new(ApiStatus::default()));
+
+    // On macOS, Now Playing / media keys require an AppKit run loop on the
+    // main thread, so the tokio app moves to a spawned thread and the main
+    // thread pumps NSApp until it exits.
+    #[cfg(target_os = "macos")]
+    {
+        // Hidden flag: fake Now Playing session for media-keys testing.
+        if std::env::args().any(|a| a == "--media-probe") {
+            return media_macos::run_probe();
+        }
+
+        // Flips `done` even if the app thread panics.
+        struct DoneGuard(Arc<AtomicBool>);
+        impl Drop for DoneGuard {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let done = Arc::new(AtomicBool::new(false));
+        let app_status = api_status.clone();
+        let app_tx = event_tx.clone();
+        let done_thread = done.clone();
+        let handle = std::thread::Builder::new()
+            .name("tuidal-app".to_string())
+            .spawn(move || -> Result<()> {
+                let _guard = DoneGuard(done_thread);
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(async_main(app_tx, event_rx, app_status))
+            })?;
+        media_macos::run_main_thread_loop(api_status, event_tx, done);
+        return handle
+            .join()
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("app thread panicked")));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async_main(event_tx, event_rx, api_status))
+    }
+}
+
+async fn async_main(
+    event_tx: mpsc::UnboundedSender<AppEvent>,
+    event_rx: mpsc::UnboundedReceiver<AppEvent>,
+    api_status: Arc<RwLock<ApiStatus>>,
+) -> Result<()> {
     let _restorer = TerminalRestorer;
     let picker = build_picker();
     enable_raw_mode()?;
@@ -124,10 +181,8 @@ async fn main() -> Result<()> {
         app.status_msg = app.lang.strings().status_press_l.to_string();
     }
 
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
     app.event_tx = Some(event_tx.clone());
 
-    let api_status = Arc::new(RwLock::new(ApiStatus::default()));
     let api_handle = tokio::spawn(api::start_server(
         event_tx.clone(),
         api_status.clone(),

@@ -87,6 +87,10 @@ impl Player {
         ];
         #[cfg(target_os = "linux")]
         mpv_args.push("--audio-device=alsa/default".to_string());
+        // Keep mpv from registering its own Now Playing session and stealing
+        // the media keys from tuidal's own integration.
+        #[cfg(target_os = "macos")]
+        mpv_args.push("--input-media-keys=no".to_string());
         if !self.af.is_empty() {
             mpv_args.push(format!("--af={}", self.af));
         }
